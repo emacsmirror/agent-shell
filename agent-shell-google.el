@@ -105,6 +105,14 @@ Example usage to set custom environment variables:
   :type '(repeat string)
   :group 'agent-shell)
 
+(defcustom agent-shell-google-gemini-needs-authentication
+  t
+  "Environment variables for the Google Gemini client.
+
+This should be a boolean value that indicates whether the Gemini CLI needs authentication."
+  :type 'boolean
+  :group 'agent-shell)
+
 (defun agent-shell-google-make-gemini-config ()
   "Create a Gemini CLI agent configuration.
 
@@ -118,7 +126,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :shell-prompt-regexp "Gemini> "
    :icon-name "gemini.png"
    :welcome-function #'agent-shell-google--gemini-welcome-message
-   :needs-authentication t
+   :needs-authentication agent-shell-google-gemini-needs-authentication
    :authenticate-request-maker (lambda ()
                                  (cond ((map-elt agent-shell-google-authentication :api-key)
                                         ;; TODO: Save authentication methods from
