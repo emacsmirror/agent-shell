@@ -1571,8 +1571,7 @@ variable (see makunbound)"))
                              new-session
                              (concat (map-elt config :buffer-name)
                                      " Agent @ "
-                                     (file-name-nondirectory
-                                      (string-remove-suffix "/" default-directory)))
+                                     (agent-shell--project-name))
                              (map-elt config :mode-line-name))))
     (with-current-buffer shell-buffer
       ;; Initialize buffer-local state
@@ -2764,6 +2763,21 @@ If in a project, use project root."
            (project-root proj)))
        default-directory
        (error "No CWD available"))))
+
+(defun agent-shell--project-name ()
+  "Return the project name for this shell.
+
+If in a project, use project name."
+  (or (when (and (boundp 'projectile-mode)
+                 projectile-mode
+                 (fboundp 'projectile-project-name))
+        (when-let* ((project (projectile-project-root)))
+          (projectile-project-name project)))
+      (when (fboundp 'project-name)
+        (when-let* ((proj (project-current)))
+          (project-name proj)))
+      (file-name-nondirectory
+       (string-remove-suffix "/" default-directory))))
 
 (defun agent-shell--current-shell ()
   "Current shell for viewport or shell buffer."
