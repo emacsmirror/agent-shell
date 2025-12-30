@@ -2477,8 +2477,9 @@ Returns list of alists with :start, :end, and :path for each mention."
     (dolist (mention mentions)
       (let* ((start (map-elt mention :start))
              (end (map-elt mention :end))
-             (path (map-elt mention :path))
-             (resolved-path (expand-file-name path (agent-shell-cwd))))
+             (relative-path (map-elt mention :path))
+             (expanded-path (expand-file-name relative-path (agent-shell-cwd)))
+             (resolved-path (agent-shell--resolve-path expanded-path)))
         ;; Add text before mention
         (when (> start pos)
           (push `((type . "text")
@@ -2487,8 +2488,8 @@ Returns list of alists with :start, :end, and :path for each mention."
 
         ;; Try to embed or link file
         (condition-case nil
-            (let ((file (and (file-readable-p resolved-path)
-                             (agent-shell--read-file-content :file-path resolved-path))))
+            (let ((file (and (file-readable-p expanded-path)
+                             (agent-shell--read-file-content :file-path expanded-path))))
               (cond
                ;; File not readable - keep mention as text
                ((not file)
@@ -2518,7 +2519,7 @@ Returns list of alists with :start, :end, and :path for each mention."
                (t
                 (push `((type . "resource_link")
                         (uri . ,(concat "file://" resolved-path))
-                        (name . ,path)
+                        (name . ,relative-path)
                         (mimeType . ,(map-elt file :mime-type))
                         (size . ,(map-elt file :size)))
                       content-blocks))))
