@@ -28,7 +28,7 @@
 ;; interact with any agent powered by ACP (Agent Client Protocol).
 ;;
 ;; `agent-shell' currently provides access to Claude Code, Cursor,
-;; Gemini CLI, Goose, Codex, OpenCode, and Qwen amongst other agents.
+;; Gemini CLI, Goose, Codex, OpenCode, Qwen, and Auggie amongst other agents.
 ;;
 ;; This package depends on the `acp' package to provide the ACP layer
 ;; as per https://agentclientprotocol.com spec.
@@ -54,6 +54,7 @@
 (require 'agent-shell-ui)
 (require 'svg nil :noerror)
 (require 'agent-shell-anthropic)
+(require 'agent-shell-auggie)
 (require 'agent-shell-cursor)
 (require 'agent-shell-diff)
 (require 'agent-shell-google)
@@ -275,8 +276,9 @@ Returns an alist with all specified values."
   "Create a list of default agent configs.
 
 This function aggregates agents from OpenAI, Anthropic, Google,
-Goose, Cursor, and others."
+Goose, Cursor, Auggie, and others."
   (list (agent-shell-anthropic-make-claude-code-config)
+        (agent-shell-auggie-make-agent-config)
         (agent-shell-openai-make-codex-config)
         (agent-shell-cursor-make-agent-config)
         (agent-shell-droid-make-agent-config)
