@@ -721,10 +721,6 @@ Flow:
                                                   (map-nested-elt update '(rawInput command)))
                                              (format "Skill: %s"
                                                      (map-nested-elt update '(rawInput command))))
-                                            ((and (string= (map-elt update 'title) "bash")
-                                                  (map-nested-elt update '(rawInput command)))
-                                             (format "bash: %s"
-                                                     (map-nested-elt update '(rawInput command))))
                                             (t
                                              (map-elt update 'title))))
                               (cons :status (map-elt update 'status))
@@ -809,6 +805,16 @@ Flow:
                   .toolCallId
                   (append (list (cons :status (map-elt update 'status))
                                 (cons :content (map-elt update 'content)))
+                          ;; OpenCode reports bash as title in tool_call notification
+                          ;; without a command. tool_call_update notification may
+                          ;; now have the command so upgrade the title to command
+                          ;; as it's more useful.
+                          ;; See https://github.com/xenodium/agent-shell/issues/182
+                          (when-let* ((should-upgrade-title
+                                       (string= (map-nested-elt state `(:tool-calls ,.toolCallId :title))
+                                                "bash"))
+                                      (command (map-nested-elt update '(rawInput command))))
+                            (list (cons :title command)))
                           (when-let ((diff (agent-shell--make-diff-info (map-elt update 'content))))
                             (list (cons :diff diff)))))
                  (let* ((diff (map-nested-elt state `(:tool-calls ,.toolCallId :diff)))
