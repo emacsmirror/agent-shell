@@ -1517,9 +1517,11 @@ DESTINATION-DIR is required and must be provided."
                    (_ '("unknown" warning))))
          (label (car config))
          (face (cadr config))
-         (color (face-foreground face nil t)))
+         (color (face-foreground face nil t))
+         ;; Wrap the label in [ and ] in TUI which cannot render the box border.
+         (label-format (if (display-graphic-p) " %s " "[%s]")))
     (agent-shell--add-text-properties
-     (propertize (format " %s " label) 'font-lock-face 'default)
+     (propertize (format label-format label) 'font-lock-face 'default)
      'font-lock-face
      `(:foreground ,color :box (:color ,color)))))
 
@@ -1551,11 +1553,13 @@ Returns propertized labels in :status and :title propertized."
     `((:status . ,(let ((status (when (map-elt tool-call :status)
                                   (agent-shell--status-label (map-elt tool-call :status))))
                         (kind (when (map-elt tool-call :kind)
-                                (agent-shell--add-text-properties
-                                 (propertize (format " %s " (map-elt tool-call :kind))
-                                             'font-lock-face 'default)
-                                 'font-lock-face
-                                 `(:box t)))))
+                                ;; Wrap the label in [ and ] in TUI which cannot render the box border.
+                                (let* ((label-format (if (display-graphic-p) " %s " "[%s]")))
+                                  (agent-shell--add-text-properties
+                                   (propertize (format label-format (map-elt tool-call :kind))
+                                               'font-lock-face 'default)
+                                   'font-lock-face
+                                   `(:box t))))))
                     (concat
                      (when status
                        status)
