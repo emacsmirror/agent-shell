@@ -4,10 +4,10 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Version: 0.31.1
-;; Package-Requires: ((emacs "29.1") (shell-maker "0.84.8") (acp "0.8.3"))
+;; Version: 0.31.2
+;; Package-Requires: ((emacs "29.1") (shell-maker "0.84.9") (acp "0.8.3"))
 
-(defconst agent-shell--version "0.31.1")
+(defconst agent-shell--version "0.31.2")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -46,7 +46,7 @@
 (require 'json)
 (require 'map)
 (unless (require 'markdown-overlays nil 'noerror)
-  (error "Please update 'shell-maker' to v0.84.8 or newer"))
+  (error "Please update 'shell-maker' to v0.84.9 or newer"))
 (require 'agent-shell-anthropic)
 (require 'agent-shell-auggie)
 (require 'agent-shell-completion)
@@ -1713,8 +1713,8 @@ See `agent-shell-make-agent-config' for config format.
 
 Set NO-FOCUS to start in background.
 Set NEW-SESSION to start a separate new session."
-  (unless (version<= "0.84.8" shell-maker-version)
-    (error "Please update shell-maker to version 0.84.8 or newer"))
+  (unless (version<= "0.84.9" shell-maker-version)
+    (error "Please update shell-maker to version 0.84.9 or newer"))
   (unless (version<= "0.8.3" acp-package-version)
     (error "Please update acp.el to version 0.8.3 or newer"))
   (when (boundp 'agent-shell--transcript-file-path-function)
