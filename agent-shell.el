@@ -402,8 +402,29 @@ Example configuration with multiple servers:
            (command . \"npx\")
            (args . (\"-y\"
                     \"@modelcontextprotocol/server-filesystem\" \"/tmp\"))
-           (env . ()))))"
-  :type '(repeat (alist :key-type symbol :value-type sexp))
+           (env . ()))))
+
+You can also pass a function so that you can provide extra context like
+the current working directory (`agent-shell-cwd') .
+
+For example, you can set up an Emacs MCP using external `claude-code-ide'
+package. See documentation of that package for more configuration:
+
+  (require 'claude-code-ide-mcp-server)
+  (setq agent-shell-mcp-servers
+        `((lambda ()
+            (let* ((project-dir (agent-shell-cwd))
+                   (session-id (format \"claude-%s-%s\"
+                                 (file-name-nondirectory (directory-file-name project-dir))
+                                 (format-time-string \"%Y%m%d-%H%M%S\"))))
+              (puthash session-id `(:project-dir ,project-dir) claude-code-ide-mcp-server--sessions)
+              `((name . \"emacs\")
+                (type . \"http\")
+                (headers . [])
+                (url . ,(format \"http://localhost:%d/mcp/%s\"
+                           (claude-code-ide-mcp-server-ensure-server)
+                           session-id)))))))"
+  :type '(repeat (alist :key-type symbol :value-type (choice sexp function)))
   :group 'agent-shell)
 
 (cl-defun agent-shell--make-state (&key agent-config buffer client-maker needs-authentication authenticate-request-maker heartbeat)
@@ -2663,6 +2684,8 @@ normalized server configs."
   (when agent-shell-mcp-servers
     (apply #'vector
            (mapcar (lambda (server)
+                     (when (functionp server)
+                       (setq server (funcall server)))
                      (let ((normalized (copy-alist server)))
                        (when (map-contains-key normalized 'args)
                          (let ((args (map-elt normalized 'args)))
