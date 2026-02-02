@@ -471,10 +471,21 @@ Some minor modes (for example, =aggressive-indent-mode=) can interfere with an a
 
 All of the above settings can be applied on a per-project basis using [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Directory-Variables.html][directory-local variables]].
 
-** Keybindings
+** Key bindings
 
+- =RET= - Submits prompt.
+- =M-J= - Iserts newline.
 - =C-c C-c= - Interrupt current agent operation
 - =TAB and Shift-TAB= - Navigate interactive elements
+
+  To customize key binding, you can use something like:
+
+  #+begin_src emacs-lisp :lexical no
+    (use-package agent-shell
+      :bind (:map agent-shell-mode-map
+                  ("RET" . newline)
+                  ("M-RET" . shell-maker-submit)))
+  #+end_src
 
 *** Evil
 Evil users may want to rebind ~RET~ for inserting a new line in =insert
