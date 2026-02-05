@@ -3114,7 +3114,7 @@ Resolution order:
 2. If inside of a viewport buffer, derive shell buffer from its name.
 3. If currently in an `agent-shell-mode' buffer, return it.
 4. If there are shells in current project, return the first one found.
-5. Otherwise, return the first shell buffer in any project.
+5. Otherwise, ask user to pick one.
 
 When NO-CREATE is nil (default), prompt to create a new shell if none exists.
 When NO-CREATE is non-nil, return existing shell or nil/error if none exists.
@@ -3139,11 +3139,12 @@ Returns a buffer object or nil."
                                              (error "No agent config found"))
                                  :no-focus t
                                  :new-session t))
-          ;; Fall back to the first shell found (in any project)
-          (or
-           (seq-first (agent-shell-buffers))
-           (unless no-error
-             (user-error "No agent shell buffers available"))))))))
+          (if-let ((shell-buffers (agent-shell-buffers)))
+              (get-buffer (completing-read "Choose a shell: "
+                                           (mapcar #'buffer-name shell-buffers)
+                                           nil t))
+            (unless no-error
+              (user-error "No agent shell buffers available"))))))))
 
 (defun agent-shell--current-shell ()
   "Current shell for viewport or shell buffer."
