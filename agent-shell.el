@@ -1454,7 +1454,11 @@ Example output:
                                        (consp (car value)))
                                   (when-let ((enabled-items (delq nil (mapcar
                                                                        (lambda (cap-pair)
-                                                                         (when (eq (cdr cap-pair) t)
+                                                                         ;; Match (key . t) and (key) forms.
+                                                                         ;; eg. promptCapabilities uses (image . t)
+                                                                         ;; but sessionCapabilities uses (fork).
+                                                                         (when (or (eq (cdr cap-pair) t)
+                                                                                   (null (cdr cap-pair)))
                                                                            (let* ((cap-key (car cap-pair))
                                                                                   (cap-name (if (symbolp cap-key)
                                                                                                 (symbol-name cap-key)

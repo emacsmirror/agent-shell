@@ -591,6 +591,16 @@
                    (concat "load session\n"
                            "prompt        image and embedded context"))))
 
+  ;; Test with sessionCapabilities (bare keys without boolean values)
+  (let ((capabilities '((promptCapabilities (image . t) (embeddedContext . t))
+                        (mcpCapabilities (http . t) (sse . t))
+                        (sessionCapabilities (fork) (list) (resume)))))
+    (should (equal (substring-no-properties
+                    (agent-shell--format-agent-capabilities capabilities))
+                   (concat "prompt   image and embedded context\n"
+                           "mcp      http and sse\n"
+                           "session  fork, list and resume"))))
+
   ;; Test with all capabilities disabled (should return empty string)
   (let ((capabilities '((promptCapabilities (image . :false) (audio . :false)))))
     (should (equal (agent-shell--format-agent-capabilities capabilities) ""))))
