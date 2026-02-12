@@ -444,6 +444,19 @@ configuration alist for backwards compatibility."
                         :key-type symbol :value-type sexp))
   :group 'agent-shell)
 
+(defcustom agent-shell-session-load-strategy 'latest
+  "How to choose an existing session when `session/list' and `session/load' are available.
+
+Available values:
+
+  `latest': Load the latest session returned by `session/list'.
+  `prompt': Prompt to choose which session to load (or start a new one).
+  `new': Always start a new session and skip `session/list' and `session/load'."
+  :type '(choice (const :tag "Load latest session" latest)
+                 (const :tag "Prompt for session" prompt)
+                 (const :tag "Always start new session" new))
+  :group 'agent-shell)
+
 (defun agent-shell--resolve-preferred-config ()
   "Resolve `agent-shell-preferred-agent-config' to a full configuration.
 
@@ -555,6 +568,9 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :tool-calls nil)
         (cons :available-commands nil)
         (cons :available-modes nil)
+        (cons :supports-session-list nil)
+        (cons :supports-session-load nil)
+        (cons :supports-session-delete nil)
         (cons :prompt-capabilities nil)
         (cons :event-subscriptions nil)
         (cons :pending-requests nil)
@@ -845,6 +861,7 @@ When FORCE is non-nil, skip confirmation prompt."
   "p" #'agent-shell-previous-item
   "C-<tab>" #'agent-shell-cycle-session-mode
   "C-c C-c" #'agent-shell-interrupt
+  "C-c C-d" #'agent-shell-delete-session
   "C-c C-m" #'agent-shell-set-session-mode
   "C-c C-v" #'agent-shell-set-session-model
   "C-c C-o" #'agent-shell-other-buffer)
@@ -1982,7 +1999,7 @@ Returns propertized labels in :status and :title propertized."
                (agent-shell--status-label (map-elt entry 'status)))
              (lambda (entry)
                (map-elt entry 'content)))
-   :separator " "
+   :separator "  "
    :joiner "\n"))
 
 (cl-defun agent-shell--make-button (&key text help kind action keymap)
@@ -2966,6 +2983,16 @@ Must provide ON-INITIATED (lambda ())."
              :write-text-file-capability agent-shell-text-file-capabilities)
    :on-success (lambda (response)
                  (with-current-buffer shell-buffer
+                   (let ((session-capabilities (or (map-elt response 'sessionCapabilities)
+                                                   (map-nested-elt response '(agentCapabilities sessionCapabilities)))))
+                     (map-put! agent-shell--state :supports-session-list
+                               (and (listp session-capabilities)
+                                    (assq 'list session-capabilities)
+                                    t))
+                     (map-put! agent-shell--state :supports-session-delete
+                               (and (listp session-capabilities)
+                                    (assq 'delete session-capabilities)
+                                    t)))
                    ;; Save prompt capabilities from agent, converting to internal symbols
                    (when-let ((prompt-capabilities
                                (map-nested-elt response '(agentCapabilities promptCapabilities))))
@@ -2982,6 +3009,8 @@ Must provide ON-INITIATED (lambda ())."
                                                               (:description . ,(map-elt mode 'description))))
                                                           (map-elt modes 'availableModes))))))
                    (when-let ((agent-capabilities (map-elt response 'agentCapabilities)))
+                     (map-put! agent-shell--state :supports-session-load
+                               (eq (map-elt agent-capabilities 'loadSession) t))
                      (agent-shell--update-fragment
                       :state agent-shell--state
                       :namespace-id "bootstrapping"
@@ -3097,6 +3126,270 @@ Must provide ON-SESSION-INIT (lambda ())."
      :block-id "starting"
      :body "\n\nCreating session..."
      :append t))
+  (if (and (map-elt (agent-shell--state) :supports-session-list)
+           (map-elt (agent-shell--state) :supports-session-load)
+           (not (eq agent-shell-session-load-strategy 'new)))
+      (agent-shell--initiate-session-list-and-load
+       :shell shell
+       :on-session-init on-session-init)
+    (agent-shell--initiate-new-session
+     :shell shell
+     :on-session-init on-session-init)))
+
+(defun agent-shell--session-choice-label (session)
+  "Return completion label for SESSION."
+  (let* ((session-id (or (map-elt session 'sessionId)
+                         "unknown-session"))
+         (title (or (map-elt session 'title)
+                    "Untitled"))
+         (updated-at (or (map-elt session 'updatedAt)
+                         (map-elt session 'createdAt)
+                         "unknown-time")))
+    (format "%s | %s | %s" title updated-at session-id)))
+
+(defconst agent-shell--start-new-session-choice "Start a new session"
+  "Label for creating a new session from the session picker.")
+
+(defun agent-shell--session-picker-sort (candidates)
+  "Return CANDIDATES with `agent-shell--start-new-session-choice' first."
+  (if (member agent-shell--start-new-session-choice candidates)
+      (cons agent-shell--start-new-session-choice
+            (delete agent-shell--start-new-session-choice
+                    (copy-sequence candidates)))
+    candidates))
+
+(defun agent-shell--prompt-select-session-to-load (sessions)
+  "Prompt to choose one from SESSIONS.
+
+Return selected session alist, or nil to start a new session."
+  (when sessions
+    (let* ((session-choices (mapcar (lambda (session)
+                                      (cons (agent-shell--session-choice-label session)
+                                            session))
+                                    sessions))
+           (choices (cons (cons agent-shell--start-new-session-choice nil)
+                          session-choices))
+           (completion-extra-properties
+            '(:display-sort-function agent-shell--session-picker-sort
+              :cycle-sort-function agent-shell--session-picker-sort))
+           (selection (completing-read "Load session: "
+                                       (mapcar #'car choices)
+                                       nil t nil nil
+                                       agent-shell--start-new-session-choice)))
+      (cdr (assoc selection choices)))))
+
+(defun agent-shell--select-session-to-load (sessions)
+  "Select a session from SESSIONS based on `agent-shell-session-load-strategy'."
+  (pcase agent-shell-session-load-strategy
+    ('new nil)
+    ('latest (car sessions))
+    ('prompt (if noninteractive
+                 (car sessions)
+               (agent-shell--prompt-select-session-to-load sessions)))
+    (_ (car sessions))))
+
+(defun agent-shell--prompt-select-session-to-delete (sessions)
+  "Prompt to choose one from SESSIONS for deletion.
+
+Return selected session alist, or nil if user quit."
+  (when sessions
+    (let* ((choices (mapcar (lambda (session)
+                              (cons (agent-shell--session-choice-label session)
+                                    session))
+                            sessions))
+           (selection (completing-read "Delete session: "
+                                       (mapcar #'car choices)
+                                       nil t)))
+      (cdr (assoc selection choices)))))
+
+(defun agent-shell--select-session-to-delete (sessions)
+  "Select a session from SESSIONS for deletion."
+  (if noninteractive
+      (car sessions)
+    (agent-shell--prompt-select-session-to-delete sessions)))
+
+(defun agent-shell--clear-session-state ()
+  "Reset current session-scoped state for the active shell."
+  (let* ((state (agent-shell--state))
+         (session (or (map-elt state :session)
+                      (list (cons :id nil)
+                            (cons :mode-id nil)
+                            (cons :modes nil)))))
+    (map-put! session :id nil)
+    (map-put! session :mode-id nil)
+    (map-put! session :modes nil)
+    ;; Clear optional fields if they were previously populated.
+    (map-put! session :model-id nil)
+    (map-put! session :models nil)
+    (map-put! state :session session)
+    (map-put! state :set-session-mode nil)
+    (map-put! state :set-model nil)
+    (map-put! state :tool-calls nil)
+    (map-put! state :available-commands nil)
+    (agent-shell--update-header-and-mode-line)))
+
+(cl-defun agent-shell--delete-session-by-id (&key shell session-id on-success)
+  "Delete SESSION-ID via ACP using SHELL.
+
+ON-SUCCESS is called with no args after successful delete."
+  (unless session-id
+    (error "Missing required argument: :session-id"))
+  (with-current-buffer (map-elt (agent-shell--state) :buffer)
+    (agent-shell--update-fragment
+     :state (agent-shell--state)
+     :block-id "session_delete"
+     :label-left (propertize "Deleting session" 'font-lock-face 'font-lock-doc-markup-face)
+     :body (format "Requesting deletion for %s..." (substring-no-properties session-id))
+     :append t))
+  (acp-send-request
+   :client (map-elt (agent-shell--state) :client)
+   :request `((:method . "session/delete")
+              (:params . ((sessionId . ,session-id))))
+   :buffer (current-buffer)
+   :on-success (lambda (_response)
+                 (with-current-buffer (map-elt (agent-shell--state) :buffer)
+                   (agent-shell--update-fragment
+                    :state (agent-shell--state)
+                    :block-id "session_delete"
+                    :body "\n\nDone"
+                    :append t))
+                 (when on-success
+                   (funcall on-success)))
+   :on-failure (agent-shell--make-error-handler
+                :state (agent-shell--state) :shell shell)))
+
+(defun agent-shell-delete-session (&optional force-current)
+  "Delete an existing agent session from the agent's session history.
+
+This requires the agent to support the experimental ACP method
+\"session/delete\".
+
+With prefix argument FORCE-CURRENT, delete the current session without
+prompting for a session to pick (still asks for confirmation)."
+  (interactive "P")
+  (unless (or (derived-mode-p 'agent-shell-mode)
+              (derived-mode-p 'agent-shell-viewport-view-mode)
+              (derived-mode-p 'agent-shell-viewport-edit-mode))
+    (user-error "Not in an agent-shell buffer"))
+  (let* ((shell-buffer (if (derived-mode-p 'agent-shell-mode)
+                           (current-buffer)
+                         (or (agent-shell-viewport--shell-buffer)
+                             (user-error "No shell buffer available")))))
+    (with-current-buffer shell-buffer
+      (unless (map-elt (agent-shell--state) :client)
+        (user-error "Agent not initialized"))
+      (unless (map-elt (agent-shell--state) :supports-session-delete)
+        (user-error "Agent does not support session/delete"))
+      (let* ((shell `((:buffer . ,(current-buffer))))
+             (current-session-id (map-nested-elt (agent-shell--state) '(:session :id))))
+        (cond
+         ((and force-current current-session-id)
+          (when (y-or-n-p (format "Delete current session %s? "
+                                  (substring-no-properties current-session-id)))
+            (agent-shell--delete-session-by-id
+             :shell shell
+             :session-id current-session-id
+             :on-success (lambda ()
+                           (agent-shell--clear-session-state)
+                           (message "Deleted session %s"
+                                    (substring-no-properties current-session-id))))))
+         ((map-elt (agent-shell--state) :supports-session-list)
+          (with-current-buffer (map-elt (agent-shell--state) :buffer)
+            (agent-shell--update-fragment
+             :state (agent-shell--state)
+             :block-id "session_delete"
+             :label-left (propertize "Deleting session" 'font-lock-face 'font-lock-doc-markup-face)
+             :body "\n\nLooking for existing sessions..."
+             :append t))
+          (acp-send-request
+           :client (map-elt (agent-shell--state) :client)
+           :request `((:method . "session/list")
+                      (:params . ((cwd . ,(agent-shell--resolve-path (agent-shell-cwd)))))))
+           :buffer (current-buffer)
+           :on-success (lambda (response)
+                         (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
+                                (selected-session (agent-shell--select-session-to-delete sessions))
+                                (session-id (and selected-session
+                                                 (map-elt selected-session 'sessionId))))
+                           (cond
+                            ((not session-id)
+                             (message "No session selected"))
+                            ((not (y-or-n-p (format "Delete session %s? "
+                                                    (substring-no-properties session-id))))
+                             (message "Cancelled"))
+                            (t
+                             (agent-shell--delete-session-by-id
+                              :shell shell
+                              :session-id session-id
+                              :on-success (lambda ()
+                                            (when (and current-session-id
+                                                       (equal (substring-no-properties session-id)
+                                                              (substring-no-properties current-session-id)))
+                                              (agent-shell--clear-session-state))
+                                            (message "Deleted session %s"
+                                                     (substring-no-properties session-id))))))))
+           :on-failure (agent-shell--make-error-handler
+                        :state (agent-shell--state) :shell shell)))
+         (current-session-id
+          (when (y-or-n-p (format "Delete current session %s? "
+                                  (substring-no-properties current-session-id)))
+            (agent-shell--delete-session-by-id
+             :shell shell
+             :session-id current-session-id
+             :on-success (lambda ()
+                           (agent-shell--clear-session-state)
+                           (message "Deleted session %s"
+                                    (substring-no-properties current-session-id))))))
+	         (t
+	          (user-error "No session to delete"))))))
+
+(cl-defun agent-shell--set-session-from-response (&key response session-id)
+  "Set active session state from RESPONSE and SESSION-ID."
+  (map-put! agent-shell--state
+            :session (list (cons :id session-id)
+                           (cons :mode-id (map-nested-elt response '(modes currentModeId)))
+                           (cons :modes (mapcar (lambda (mode)
+                                                  `((:id . ,(map-elt mode 'id))
+                                                    (:name . ,(map-elt mode 'name))
+                                                    (:description . ,(map-elt mode 'description))))
+                                                (map-nested-elt response '(modes availableModes))))
+                           (cons :model-id (map-nested-elt response '(models currentModelId)))
+                           (cons :models (mapcar (lambda (model)
+                                                   `((:model-id . ,(map-elt model 'modelId))
+                                                     (:name . ,(map-elt model 'name))
+                                                     (:description . ,(map-elt model 'description))))
+                                                 (map-nested-elt response '(models availableModels)))))))
+
+(cl-defun agent-shell--finalize-session-init (&key on-session-init)
+  "Finalize session initialization and invoke ON-SESSION-INIT."
+  (agent-shell--update-fragment
+   :state agent-shell--state
+   :block-id "starting"
+   :label-left (format "%s %s"
+                       (agent-shell--status-label "completed")
+                       (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
+   :body "\n\nReady"
+   :append t)
+  (agent-shell--update-header-and-mode-line)
+  (when (map-nested-elt agent-shell--state '(:session :models))
+    (agent-shell--update-fragment
+     :state agent-shell--state
+     :block-id "available_models"
+     :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
+     :body (agent-shell--format-available-models
+            (map-nested-elt agent-shell--state '(:session :models)))))
+  (when (agent-shell--get-available-modes agent-shell--state)
+    (agent-shell--update-fragment
+     :state agent-shell--state
+     :block-id "available_modes"
+     :label-left (propertize "Available modes" 'font-lock-face 'font-lock-doc-markup-face)
+     :body (agent-shell--format-available-modes
+            (agent-shell--get-available-modes agent-shell--state))))
+  (agent-shell--update-header-and-mode-line)
+  (funcall on-session-init))
+
+(cl-defun agent-shell--initiate-new-session (&key shell on-session-init)
+  "Initiate ACP session/new with SHELL and ON-SESSION-INIT."
   (acp-send-request
    :client (map-elt (agent-shell--state) :client)
    :request (acp-make-session-new-request
@@ -3149,6 +3442,64 @@ Must provide ON-SESSION-INIT (lambda ())."
                  (funcall on-session-init))
    :on-failure (agent-shell--make-error-handler
                 :state agent-shell--state :shell-buffer shell-buffer)))
+
+(cl-defun agent-shell--initiate-session-list-and-load (&key shell on-session-init)
+  "Try loading latest existing session with SHELL and ON-SESSION-INIT."
+  (with-current-buffer (map-elt (agent-shell--state) :buffer)
+    (agent-shell--update-fragment
+     :state (agent-shell--state)
+     :block-id "starting"
+     :body "\n\nLooking for existing sessions..."
+     :append t))
+  (acp-send-request
+   :client (map-elt (agent-shell--state) :client)
+   :request `((:method . "session/list")
+              (:params . ((cwd . ,(agent-shell--resolve-path (agent-shell-cwd))))))
+   :buffer (current-buffer)
+   :on-success (lambda (response)
+                 (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
+                        (selected-session
+                         (condition-case nil
+                             (agent-shell--select-session-to-load sessions)
+                           (quit nil)))
+                        (session-id (and selected-session
+                                         (map-elt selected-session 'sessionId))))
+                   (if session-id
+                       (progn
+                         (agent-shell--update-fragment
+                          :state (agent-shell--state)
+                          :block-id "starting"
+                          :body (format "\n\nLoading session %s..."
+                                        (substring-no-properties session-id))
+                          :append t)
+                         (acp-send-request
+                          :client (map-elt (agent-shell--state) :client)
+                          :request `((:method . "session/load")
+                                     (:params . ((sessionId . ,session-id)
+                                                 (cwd . ,(agent-shell--resolve-path (agent-shell-cwd)))
+                                                 (mcpServers . ,(or (agent-shell--mcp-servers) [])))))
+                          :buffer (current-buffer)
+                          :on-success (lambda (load-response)
+                                        (agent-shell--set-session-from-response
+                                         :response load-response
+                                         :session-id session-id)
+                                        (agent-shell--finalize-session-init :on-session-init on-session-init))
+                          :on-failure (lambda (_error _raw-message)
+                                        (agent-shell--update-fragment
+                                         :state (agent-shell--state)
+                                         :block-id "starting"
+                                         :body "\n\nCould not load existing session. Creating a new one..."
+                                         :append t)
+                                        (agent-shell--initiate-new-session
+                                         :shell shell
+                                         :on-session-init on-session-init))))
+                     (agent-shell--initiate-new-session
+                      :shell shell
+                      :on-session-init on-session-init))))
+   :on-failure (lambda (_error _raw-message)
+                 (agent-shell--initiate-new-session
+                  :shell shell
+                  :on-session-init on-session-init))))
 
 (defun agent-shell--eval-dynamic-values (obj)
   "Recursively evaluate any lambda values in OBJ.
@@ -4273,7 +4624,9 @@ Returns an alist with insertion details or nil otherwise:
 
   ((:buffer . BUFFER)
    (:start . START)
-   (:end . END))"
+   (:end . END))
+
+Uses optional SHELL-BUFFER to make paths relative to shell project."
   (if agent-shell-prefer-viewport-interaction
       (agent-shell-viewport--show-buffer :append text :submit submit
                                          :no-focus no-focus :shell-buffer shell-buffer)
