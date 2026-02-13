@@ -191,21 +191,21 @@
   (dolist (test-case `(;; Graphical display mode
                        ( :graphic t
                          :homogeneous-expected
-                         ,(concat " pending  Update state initialization\n"
-                                  " pending  Update session initialization")
+                         ,(concat " pending   Update state initialization\n"
+                                  " pending   Update session initialization")
                          :mixed-expected
-                         ,(concat " pending      First task\n"
-                                  " in progress  Second task\n"
-                                  " completed    Third task"))
+                         ,(concat " pending       First task\n"
+                                  " in progress   Second task\n"
+                                  " completed     Third task"))
                        ;; Terminal display mode
                        ( :graphic nil
                          :homogeneous-expected
-                         ,(concat "[pending] Update state initialization\n"
-                                  "[pending] Update session initialization")
+                         ,(concat "[pending]  Update state initialization\n"
+                                  "[pending]  Update session initialization")
                          :mixed-expected
-                         ,(concat "[pending]     First task\n"
-                                  "[in progress] Second task\n"
-                                  "[completed]   Third task"))))
+                         ,(concat "[pending]      First task\n"
+                                  "[in progress]  Second task\n"
+                                  "[completed]    Third task"))))
     (cl-letf (((symbol-function 'display-graphic-p)
                (lambda (&optional _display) (plist-get test-case :graphic))))
       ;; Test homogeneous statuses
@@ -479,7 +479,7 @@
       ;; Send a simple command
       (agent-shell--send-command
        :prompt "Hello agent"
-       :shell nil)
+       :shell-buffer nil)
 
       ;; Verify request was sent
       (should sent-request)
@@ -516,7 +516,7 @@
       ;; Now verify send-command handles the error gracefully
       (agent-shell--send-command
        :prompt "Test prompt with @file.txt"
-       :shell nil)
+       :shell-buffer nil)
 
       ;; Verify request was sent (fallback succeeded)
       (should sent-request)
@@ -908,7 +908,7 @@ code block content with spaces
                                                                 (description . "Test model"))])))))
                        (_ (error "Unexpected method: %s" method)))))))
         (agent-shell--initiate-session
-         :shell `((:buffer . ,(current-buffer)))
+         :shell-buffer (current-buffer)
          :on-session-init (lambda ()
                             (setq session-init-called t)))
         (let ((ordered-requests (nreverse requests)))
@@ -965,7 +965,7 @@ code block content with spaces
                                  '((sessionId . "new-session-456"))))
                        (_ (error "Unexpected method: %s" method)))))))
         (agent-shell--initiate-session
-         :shell `((:buffer . ,(current-buffer)))
+         :shell-buffer (current-buffer)
          :on-session-init (lambda ()
                             (setq session-init-called t)))
         (let ((ordered-requests (nreverse requests)))
@@ -1085,7 +1085,7 @@ code block content with spaces
                                  '((sessionId . "new-session-789"))))
                        (_ (error "Unexpected method: %s" method)))))))
         (agent-shell--initiate-session
-         :shell `((:buffer . ,(current-buffer)))
+         :shell-buffer (current-buffer)
          :on-session-init (lambda ()
                             (setq session-init-called t)))
         (let ((ordered-requests (nreverse requests)))
@@ -1127,7 +1127,7 @@ code block content with spaces
                         (funcall (plist-get args :on-success) '((ok . t))))
                        (_ (error "Unexpected method: %s" method)))))))
         (agent-shell--delete-session-by-id
-         :shell `((:buffer . ,(current-buffer)))
+         :shell-buffer (current-buffer)
          :session-id "session-2"
          :on-success (lambda () (setq success-called t)))
         (should success-called)

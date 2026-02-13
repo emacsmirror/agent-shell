@@ -3033,8 +3033,8 @@ Return selected session alist, or nil if user quit."
     (map-put! state :available-commands nil)
     (agent-shell--update-header-and-mode-line)))
 
-(cl-defun agent-shell--delete-session-by-id (&key shell session-id on-success)
-  "Delete SESSION-ID via ACP using SHELL.
+(cl-defun agent-shell--delete-session-by-id (&key shell-buffer session-id on-success)
+  "Delete SESSION-ID via ACP using SHELL-BUFFER.
 
 ON-SUCCESS is called with no args after successful delete."
   (unless session-id
@@ -3061,7 +3061,7 @@ ON-SUCCESS is called with no args after successful delete."
                  (when on-success
                    (funcall on-success)))
    :on-failure (agent-shell--make-error-handler
-                :state (agent-shell--state) :shell shell)))
+                :state (agent-shell--state) :shell-buffer shell-buffer)))
 
 (defun agent-shell-delete-session (&optional force-current)
   "Delete an existing agent session from the agent's session history.
@@ -3085,14 +3085,13 @@ prompting for a session to pick (still asks for confirmation)."
         (user-error "Agent not initialized"))
       (unless (map-elt (agent-shell--state) :supports-session-delete)
         (user-error "Agent does not support session/delete"))
-      (let* ((shell `((:buffer . ,(current-buffer))))
-             (current-session-id (map-nested-elt (agent-shell--state) '(:session :id))))
+      (let* ((current-session-id (map-nested-elt (agent-shell--state) '(:session :id))))
         (cond
          ((and force-current current-session-id)
           (when (y-or-n-p (format "Delete current session %s? "
                                   (substring-no-properties current-session-id)))
             (agent-shell--delete-session-by-id
-             :shell shell
+             :shell-buffer shell-buffer
              :session-id current-session-id
              :on-success (lambda ()
                            (agent-shell--clear-session-state)
@@ -3124,7 +3123,7 @@ prompting for a session to pick (still asks for confirmation)."
                              (message "Cancelled"))
                             (t
                              (agent-shell--delete-session-by-id
-                              :shell shell
+                              :shell-buffer shell-buffer
                               :session-id session-id
                               :on-success (lambda ()
                                             (when (and current-session-id
@@ -3134,12 +3133,12 @@ prompting for a session to pick (still asks for confirmation)."
                                             (message "Deleted session %s"
                                                      (substring-no-properties session-id))))))))
            :on-failure (agent-shell--make-error-handler
-                        :state (agent-shell--state) :shell shell)))
+                        :state (agent-shell--state) :shell-buffer shell-buffer)))
          (current-session-id
           (when (y-or-n-p (format "Delete current session %s? "
                                   (substring-no-properties current-session-id)))
             (agent-shell--delete-session-by-id
-             :shell shell
+             :shell-buffer shell-buffer
              :session-id current-session-id
              :on-success (lambda ()
                            (agent-shell--clear-session-state)
