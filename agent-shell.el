@@ -2760,19 +2760,19 @@ Must provide ON-INITIATED (lambda ())."
              :write-text-file-capability agent-shell-text-file-capabilities)
    :on-success (lambda (response)
                  (with-current-buffer shell-buffer
-                   (let ((session-capabilities (or (map-elt response 'sessionCapabilities)
-                                                   (map-nested-elt response '(agentCapabilities sessionCapabilities)))))
+                   (let ((acp-session-capabilities (or (map-elt response 'sessionCapabilities)
+                                                       (map-nested-elt response '(agentCapabilities sessionCapabilities)))))
                      (map-put! agent-shell--state :supports-session-list
-                               (and (listp session-capabilities)
-                                    (assq 'list session-capabilities)
+                               (and (listp acp-session-capabilities)
+                                    (assq 'list acp-session-capabilities)
                                     t))
                      (map-put! agent-shell--state :supports-session-delete
-                               (and (listp session-capabilities)
-                                    (assq 'delete session-capabilities)
+                               (and (listp acp-session-capabilities)
+                                    (assq 'delete acp-session-capabilities)
                                     t))
                      (map-put! agent-shell--state :supports-session-resume
-                               (and (listp session-capabilities)
-                                    (assq 'resume session-capabilities)
+                               (and (listp acp-session-capabilities)
+                                    (assq 'resume acp-session-capabilities)
                                     t)))
                    ;; Save prompt capabilities from agent, converting to internal symbols
                    (when-let ((prompt-capabilities
@@ -2938,35 +2938,35 @@ for the current year, or \"Mon DD, YYYY\" for other years."
           (format-time-string "%b %d, %Y" time))))
     (error iso-timestamp)))
 
-(defun agent-shell--session-choice-label (session)
-  "Return completion label for SESSION."
-  (let* ((title (or (map-elt session 'title)
+(defun agent-shell--session-choice-label (acp-session)
+  "Return completion label for ACP-SESSION."
+  (let* ((title (or (map-elt acp-session 'title)
                     "Untitled"))
          (title (if (> (length title) 50)
                     (concat (substring title 0 47) "...")
                   title))
-         (updated-at (or (map-elt session 'updatedAt)
-                         (map-elt session 'createdAt)
+         (updated-at (or (map-elt acp-session 'updatedAt)
+                         (map-elt acp-session 'createdAt)
                          "unknown-time"))
          (date-str (propertize (agent-shell--format-session-date updated-at)
                                'face 'font-lock-comment-face))
          (padding (make-string (max 2 (- 52 (length title))) ?\s)))
     (concat title padding date-str)))
 
-(defun agent-shell--prompt-select-session (sessions)
-  "Prompt to choose one from SESSIONS.
+(defun agent-shell--prompt-select-session (acp-sessions)
+  "Prompt to choose one from ACP-SESSIONS.
 
 Return selected session alist, or nil to start a new session.
 Falls back to latest session in batch mode (e.g. tests)."
-  (when sessions
+  (when acp-sessions
     (if noninteractive
-        (car sessions)
+        (car acp-sessions)
     (let* ((new-session-choice "Start a new session")
            (choices (cons (cons new-session-choice nil)
-                          (mapcar (lambda (session)
-                                    (cons (agent-shell--session-choice-label session)
-                                          session))
-                                  sessions)))
+                          (mapcar (lambda (acp-session)
+                                    (cons (agent-shell--session-choice-label acp-session)
+                                          acp-session))
+                                  acp-sessions)))
            (candidates (mapcar #'car choices))
            ;; Some completion frameworks yielded appended (nil) to each line
            ;; unless this-command was bound.
@@ -2983,25 +2983,25 @@ Falls back to latest session in batch mode (e.g. tests)."
       (map-elt choices selection)))))
 
 
-(defun agent-shell--prompt-select-session-to-delete (sessions)
-  "Prompt to choose one from SESSIONS for deletion.
+(defun agent-shell--prompt-select-session-to-delete (acp-sessions)
+  "Prompt to choose one from ACP-SESSIONS for deletion.
 
 Return selected session alist, or nil if user quit."
-  (when sessions
-    (let* ((choices (mapcar (lambda (session)
-                              (cons (agent-shell--session-choice-label session)
-                                    session))
-                            sessions))
+  (when acp-sessions
+    (let* ((choices (mapcar (lambda (acp-session)
+                              (cons (agent-shell--session-choice-label acp-session)
+                                    acp-session))
+                            acp-sessions))
            (selection (completing-read "Delete session: "
                                        (mapcar #'car choices)
                                        nil t)))
       (cdr (assoc selection choices)))))
 
-(defun agent-shell--select-session-to-delete (sessions)
-  "Select a session from SESSIONS for deletion."
+(defun agent-shell--select-session-to-delete (acp-sessions)
+  "Select a session from ACP-SESSIONS for deletion."
   (if noninteractive
-      (car sessions)
-    (agent-shell--prompt-select-session-to-delete sessions)))
+      (car acp-sessions)
+    (agent-shell--prompt-select-session-to-delete acp-sessions)))
 
 (defun agent-shell--clear-session-state ()
   "Reset current session-scoped state for the active shell."
@@ -3023,23 +3023,23 @@ Return selected session alist, or nil if user quit."
     (map-put! state :available-commands nil)
     (agent-shell--update-header-and-mode-line)))
 
-(cl-defun agent-shell--delete-session-by-id (&key shell-buffer session-id on-success)
-  "Delete SESSION-ID via ACP using SHELL-BUFFER.
+(cl-defun agent-shell--delete-session-by-id (&key shell-buffer acp-session-id on-success)
+  "Delete ACP-SESSION-ID via ACP using SHELL-BUFFER.
 
 ON-SUCCESS is called with no args after successful delete."
-  (unless session-id
-    (error "Missing required argument: :session-id"))
+  (unless acp-session-id
+    (error "Missing required argument: :acp-session-id"))
   (with-current-buffer (map-elt (agent-shell--state) :buffer)
     (agent-shell--update-fragment
      :state (agent-shell--state)
      :block-id "session_delete"
      :label-left (propertize "Deleting session" 'font-lock-face 'font-lock-doc-markup-face)
-     :body (format "Requesting deletion for %s..." (substring-no-properties session-id))
+     :body (format "Requesting deletion for %s..." (substring-no-properties acp-session-id))
      :append t))
   (acp-send-request
    :client (map-elt (agent-shell--state) :client)
    :request (acp-make-session-delete-request
-             :session-id session-id)
+             :session-id acp-session-id)
    :buffer (current-buffer)
    :on-success (lambda (_response)
                  (with-current-buffer (map-elt (agent-shell--state) :buffer)
@@ -3082,7 +3082,7 @@ prompting for a session to pick (still asks for confirmation)."
                                   (substring-no-properties current-session-id)))
             (agent-shell--delete-session-by-id
              :shell-buffer shell-buffer
-             :session-id current-session-id
+             :acp-session-id current-session-id
              :on-success (lambda ()
                            (agent-shell--clear-session-state)
                            (message "Deleted session %s"
@@ -3100,28 +3100,28 @@ prompting for a session to pick (still asks for confirmation)."
            :request (acp-make-session-list-request
                      :cwd (agent-shell--resolve-path (agent-shell-cwd)))
            :buffer (current-buffer)
-           :on-success (lambda (response)
-                         (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
-                                (selected-session (agent-shell--select-session-to-delete sessions))
-                                (session-id (and selected-session
-                                                 (map-elt selected-session 'sessionId))))
+           :on-success (lambda (acp-response)
+                         (let* ((acp-sessions (append (or (map-elt acp-response 'sessions) '()) nil))
+                                (acp-session (agent-shell--select-session-to-delete acp-sessions))
+                                (acp-session-id (and acp-session
+                                                     (map-elt acp-session 'sessionId))))
                            (cond
-                            ((not session-id)
+                            ((not acp-session-id)
                              (message "No session selected"))
                             ((not (y-or-n-p (format "Delete session %s? "
-                                                    (substring-no-properties session-id))))
+                                                    (substring-no-properties acp-session-id))))
                              (message "Cancelled"))
                             (t
                              (agent-shell--delete-session-by-id
                               :shell-buffer shell-buffer
-                              :session-id session-id
+                              :acp-session-id acp-session-id
                               :on-success (lambda ()
                                             (when (and current-session-id
-                                                       (equal (substring-no-properties session-id)
+                                                       (equal (substring-no-properties acp-session-id)
                                                               (substring-no-properties current-session-id)))
                                               (agent-shell--clear-session-state))
                                             (message "Deleted session %s"
-                                                     (substring-no-properties session-id))))))))
+                                                     (substring-no-properties acp-session-id))))))))
            :on-failure (agent-shell--make-error-handler
                         :state (agent-shell--state) :shell-buffer shell-buffer)))
          (current-session-id
@@ -3129,7 +3129,7 @@ prompting for a session to pick (still asks for confirmation)."
                                   (substring-no-properties current-session-id)))
             (agent-shell--delete-session-by-id
              :shell-buffer shell-buffer
-             :session-id current-session-id
+             :acp-session-id current-session-id
              :on-success (lambda ()
                            (agent-shell--clear-session-state)
                            (message "Deleted session %s"
@@ -3137,22 +3137,22 @@ prompting for a session to pick (still asks for confirmation)."
          (t
           (user-error "No session to delete")))))))
 
-(cl-defun agent-shell--set-session-from-response (&key response session-id)
-  "Set active session state from RESPONSE and SESSION-ID."
+(cl-defun agent-shell--set-session-from-response (&key acp-response acp-session-id)
+  "Set active session state from ACP-RESPONSE and ACP-SESSION-ID."
   (map-put! agent-shell--state
-            :session (list (cons :id session-id)
-                           (cons :mode-id (map-nested-elt response '(modes currentModeId)))
+            :session (list (cons :id acp-session-id)
+                           (cons :mode-id (map-nested-elt acp-response '(modes currentModeId)))
                            (cons :modes (mapcar (lambda (mode)
                                                   `((:id . ,(map-elt mode 'id))
                                                     (:name . ,(map-elt mode 'name))
                                                     (:description . ,(map-elt mode 'description))))
-                                                (map-nested-elt response '(modes availableModes))))
-                           (cons :model-id (map-nested-elt response '(models currentModelId)))
+                                                (map-nested-elt acp-response '(modes availableModes))))
+                           (cons :model-id (map-nested-elt acp-response '(models currentModelId)))
                            (cons :models (mapcar (lambda (model)
                                                    `((:model-id . ,(map-elt model 'modelId))
                                                      (:name . ,(map-elt model 'name))
                                                      (:description . ,(map-elt model 'description))))
-                                                 (map-nested-elt response '(models availableModels)))))))
+                                                 (map-nested-elt acp-response '(models availableModels)))))))
 
 (cl-defun agent-shell--finalize-session-init (&key on-session-init)
   "Finalize session initialization and invoke ON-SESSION-INIT."
@@ -3252,27 +3252,27 @@ prompting for a session to pick (still asks for confirmation)."
    :request (acp-make-session-list-request
              :cwd (agent-shell--resolve-path (agent-shell-cwd)))
    :buffer (current-buffer)
-   :on-success (lambda (response)
-                 (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
-                        (selected-session
+   :on-success (lambda (acp-response)
+                 (let* ((acp-sessions (append (or (map-elt acp-response 'sessions) '()) nil))
+                        (acp-session
                          (condition-case nil
                              (pcase agent-shell-session-load-strategy
                                ('new nil)
-                               ('latest (car sessions))
-                               ('prompt (agent-shell--prompt-select-session sessions))
+                               ('latest (car acp-sessions))
+                               ('prompt (agent-shell--prompt-select-session acp-sessions))
                                (_ (message "Unknown session load strategy '%s', starting a new session"
                                            agent-shell-session-load-strategy)
                                   nil))
                            (quit nil)))
-                        (session-id (and selected-session
-                                         (map-elt selected-session 'sessionId))))
-                   (if session-id
+                        (acp-session-id (and acp-session
+                                             (map-elt acp-session 'sessionId))))
+                   (if acp-session-id
                        (progn
                          (agent-shell--update-fragment
                           :state (agent-shell--state)
                           :block-id "starting"
                           :body (format "\n\nLoading session %s..."
-                                        (substring-no-properties session-id))
+                                        (substring-no-properties acp-session-id))
                           :append t)
                          (acp-send-request
                           :client (map-elt (agent-shell--state) :client)
@@ -3280,18 +3280,18 @@ prompting for a session to pick (still asks for confirmation)."
                                          (mcp-servers (agent-shell--mcp-servers)))
                                      (if (map-elt (agent-shell--state) :supports-session-load)
                                          (acp-make-session-load-request
-                                          :session-id session-id
+                                          :session-id acp-session-id
                                           :cwd cwd
                                           :mcp-servers mcp-servers)
                                        (acp-make-session-resume-request
-                                        :session-id session-id
+                                        :session-id acp-session-id
                                         :cwd cwd
                                         :mcp-servers mcp-servers)))
                           :buffer (current-buffer)
-                          :on-success (lambda (load-response)
+                          :on-success (lambda (acp-load-response)
                                         (agent-shell--set-session-from-response
-                                         :response load-response
-                                         :session-id session-id)
+                                         :acp-response acp-load-response
+                                         :acp-session-id acp-session-id)
                                         (agent-shell--finalize-session-init :on-session-init on-session-init))
                           :on-failure (lambda (_error _raw-message)
                                         (agent-shell--update-fragment
