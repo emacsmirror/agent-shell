@@ -2953,46 +2953,35 @@ for the current year, or \"Mon DD, YYYY\" for other years."
          (padding (make-string (max 2 (- 52 (length title))) ?\s)))
     (concat title padding date-str)))
 
-(defconst agent-shell--start-new-session-choice "Start a new session"
-  "Label for creating a new session from the session picker.")
-
-(defun agent-shell--session-picker-sort (candidates)
-  "Return CANDIDATES with `agent-shell--start-new-session-choice' first."
-  (if (member agent-shell--start-new-session-choice candidates)
-      (cons agent-shell--start-new-session-choice
-            (delete agent-shell--start-new-session-choice
-                    (copy-sequence candidates)))
-    candidates))
-
-(defun agent-shell--prompt-select-session-to-load (sessions)
+(defun agent-shell--prompt-select-session (sessions)
   "Prompt to choose one from SESSIONS.
 
-Return selected session alist, or nil to start a new session."
+Return selected session alist, or nil to start a new session.
+Falls back to latest session in batch mode (e.g. tests)."
   (when sessions
-    (let* ((session-choices (mapcar (lambda (session)
-                                      (cons (agent-shell--session-choice-label session)
-                                            session))
-                                    sessions))
-           (choices (cons (cons agent-shell--start-new-session-choice nil)
-                          session-choices))
-           (completion-extra-properties
-            '(:display-sort-function agent-shell--session-picker-sort
-              :cycle-sort-function agent-shell--session-picker-sort))
-           (selection (completing-read "Load session: "
-                                       (mapcar #'car choices)
+    (if noninteractive
+        (car sessions)
+    (let* ((new-session-choice "Start a new session")
+           (choices (cons (cons new-session-choice nil)
+                          (mapcar (lambda (session)
+                                    (cons (agent-shell--session-choice-label session)
+                                          session))
+                                  sessions)))
+           (candidates (mapcar #'car choices))
+           ;; Some completion frameworks yielded appended (nil) to each line
+           ;; unless this-command was bound.
+           ;;
+           ;; For example:
+           ;;
+           ;; Let's build something                 Today, 16:25 (nil)
+           ;; Let's optimize the rocket engine      Feb 12, 21:02 (nil)
+           (this-command 'agent-shell)
+           (selection (completing-read "Resume session: "
+                                       candidates
                                        nil t nil nil
-                                       agent-shell--start-new-session-choice)))
-      (cdr (assoc selection choices)))))
+                                       new-session-choice)))
+      (map-elt choices selection)))))
 
-(defun agent-shell--select-session-to-load (sessions)
-  "Select a session from SESSIONS based on `agent-shell-session-load-strategy'."
-  (pcase agent-shell-session-load-strategy
-    ('new nil)
-    ('latest (car sessions))
-    ('prompt (if noninteractive
-                 (car sessions)
-               (agent-shell--prompt-select-session-to-load sessions)))
-    (_ (car sessions))))
 
 (defun agent-shell--prompt-select-session-to-delete (sessions)
   "Prompt to choose one from SESSIONS for deletion.
@@ -3267,7 +3256,13 @@ prompting for a session to pick (still asks for confirmation)."
                  (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
                         (selected-session
                          (condition-case nil
-                             (agent-shell--select-session-to-load sessions)
+                             (pcase agent-shell-session-load-strategy
+                               ('new nil)
+                               ('latest (car sessions))
+                               ('prompt (agent-shell--prompt-select-session sessions))
+                               (_ (message "Unknown session load strategy '%s', starting a new session"
+                                          agent-shell-session-load-strategy)
+                                  nil))
                            (quit nil)))
                         (session-id (and selected-session
                                          (map-elt selected-session 'sessionId))))
