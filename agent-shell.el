@@ -528,6 +528,7 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :available-modes nil)
         (cons :supports-session-list nil)
         (cons :supports-session-load nil)
+        (cons :supports-session-resume nil)
         (cons :supports-session-delete nil)
         (cons :prompt-capabilities nil)
         (cons :pending-requests nil)
@@ -2767,6 +2768,10 @@ Must provide ON-INITIATED (lambda ())."
                      (map-put! agent-shell--state :supports-session-delete
                                (and (listp session-capabilities)
                                     (assq 'delete session-capabilities)
+                                    t))
+                     (map-put! agent-shell--state :supports-session-resume
+                               (and (listp session-capabilities)
+                                    (assq 'resume session-capabilities)
                                     t)))
                    ;; Save prompt capabilities from agent, converting to internal symbols
                    (when-let ((prompt-capabilities
@@ -2895,13 +2900,14 @@ Must provide ON-SESSION-INIT (lambda ())."
      :body "\n\nCreating session..."
      :append t))
   (if (and (map-elt (agent-shell--state) :supports-session-list)
-           (map-elt (agent-shell--state) :supports-session-load)
+           (or (map-elt (agent-shell--state) :supports-session-load)
+               (map-elt (agent-shell--state) :supports-session-resume))
            (not (eq agent-shell-session-load-strategy 'new)))
       (agent-shell--initiate-session-list-and-load
-       :shell shell
+       :shell-buffer shell-buffer
        :on-session-init on-session-init)
     (agent-shell--initiate-new-session
-     :shell shell
+     :shell-buffer shell-buffer
      :on-session-init on-session-init)))
 
 (defun agent-shell--session-choice-label (session)
@@ -3137,11 +3143,13 @@ prompting for a session to pick (still asks for confirmation)."
                        (agent-shell--status-label "completed")
                        (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
    :body "\n\nReady"
+   :namespace-id "bootstrapping"
    :append t)
   (agent-shell--update-header-and-mode-line)
   (when (map-nested-elt agent-shell--state '(:session :models))
     (agent-shell--update-fragment
      :state agent-shell--state
+     :namespace-id "bootstrapping"
      :block-id "available_models"
      :label-left (propertize "Available models" 'font-lock-face 'font-lock-doc-markup-face)
      :body (agent-shell--format-available-models
@@ -3149,6 +3157,7 @@ prompting for a session to pick (still asks for confirmation)."
   (when (agent-shell--get-available-modes agent-shell--state)
     (agent-shell--update-fragment
      :state agent-shell--state
+     :namespace-id "bootstrapping"
      :block-id "available_modes"
      :label-left (propertize "Available modes" 'font-lock-face 'font-lock-doc-markup-face)
      :body (agent-shell--format-available-modes
@@ -3156,8 +3165,8 @@ prompting for a session to pick (still asks for confirmation)."
   (agent-shell--update-header-and-mode-line)
   (funcall on-session-init))
 
-(cl-defun agent-shell--initiate-new-session (&key shell on-session-init)
-  "Initiate ACP session/new with SHELL and ON-SESSION-INIT."
+(cl-defun agent-shell--initiate-new-session (&key shell-buffer on-session-init)
+  "Initiate ACP session/new with SHELL-BUFFER and ON-SESSION-INIT."
   (acp-send-request
    :client (map-elt (agent-shell--state) :client)
    :request (acp-make-session-new-request
@@ -3210,8 +3219,8 @@ prompting for a session to pick (still asks for confirmation)."
    :on-failure (agent-shell--make-error-handler
                 :state agent-shell--state :shell-buffer shell-buffer)))
 
-(cl-defun agent-shell--initiate-session-list-and-load (&key shell on-session-init)
-  "Try loading latest existing session with SHELL and ON-SESSION-INIT."
+(cl-defun agent-shell--initiate-session-list-and-load (&key shell-buffer on-session-init)
+  "Try loading latest existing session with SHELL-BUFFER and ON-SESSION-INIT."
   (with-current-buffer (map-elt (agent-shell--state) :buffer)
     (agent-shell--update-fragment
      :state (agent-shell--state)
@@ -3221,7 +3230,8 @@ prompting for a session to pick (still asks for confirmation)."
   (acp-send-request
    :client (map-elt (agent-shell--state) :client)
    :request `((:method . "session/list")
-              (:params . ((cwd . ,(agent-shell--resolve-path (agent-shell-cwd))))))
+              ;; Must remove trailing / to make sure Claude recognizes previous CWDs.
+              (:params . ((cwd . ,(agent-shell--resolve-path (string-remove-suffix "/" (agent-shell-cwd)))))))
    :buffer (current-buffer)
    :on-success (lambda (response)
                  (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
@@ -3241,9 +3251,11 @@ prompting for a session to pick (still asks for confirmation)."
                           :append t)
                          (acp-send-request
                           :client (map-elt (agent-shell--state) :client)
-                          :request `((:method . "session/load")
+                          :request `((:method . ,(if (map-elt (agent-shell--state) :supports-session-load)
+                                                     "session/load"
+                                                   "session/resume"))
                                      (:params . ((sessionId . ,session-id)
-                                                 (cwd . ,(agent-shell--resolve-path (agent-shell-cwd)))
+                                                 (cwd . ,(agent-shell--resolve-path (string-remove-suffix "/" (agent-shell-cwd))))
                                                  (mcpServers . ,(or (agent-shell--mcp-servers) [])))))
                           :buffer (current-buffer)
                           :on-success (lambda (load-response)
@@ -3258,14 +3270,14 @@ prompting for a session to pick (still asks for confirmation)."
                                          :body "\n\nCould not load existing session. Creating a new one..."
                                          :append t)
                                         (agent-shell--initiate-new-session
-                                         :shell shell
+                                         :shell-buffer shell-buffer
                                          :on-session-init on-session-init))))
                      (agent-shell--initiate-new-session
-                      :shell shell
+                      :shell-buffer shell-buffer
                       :on-session-init on-session-init))))
    :on-failure (lambda (_error _raw-message)
                  (agent-shell--initiate-new-session
-                  :shell shell
+                  :shell-buffer shell-buffer
                   :on-session-init on-session-init))))
 
 (defun agent-shell--eval-dynamic-values (obj)
