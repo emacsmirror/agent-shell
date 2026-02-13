@@ -3109,7 +3109,7 @@ prompting for a session to pick (still asks for confirmation)."
           (acp-send-request
            :client (map-elt (agent-shell--state) :client)
            :request (acp-make-session-list-request
-                     :cwd (agent-shell--resolve-path (agent-shell-cwd))))
+                     :cwd (agent-shell--resolve-path (agent-shell-cwd)))
            :buffer (current-buffer)
            :on-success (lambda (response)
                          (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
@@ -3145,8 +3145,8 @@ prompting for a session to pick (still asks for confirmation)."
                            (agent-shell--clear-session-state)
                            (message "Deleted session %s"
                                     (substring-no-properties current-session-id))))))
-	         (t
-	          (user-error "No session to delete"))))))
+         (t
+          (user-error "No session to delete")))))))
 
 (cl-defun agent-shell--set-session-from-response (&key response session-id)
   "Set active session state from RESPONSE and SESSION-ID."
