@@ -3280,8 +3280,8 @@ ON-SUCCESS is called with no args after successful delete."
      :append t))
   (acp-send-request
    :client (map-elt (agent-shell--state) :client)
-   :request `((:method . "session/delete")
-              (:params . ((sessionId . ,session-id))))
+   :request (acp-make-session-delete-request
+             :session-id session-id)
    :buffer (current-buffer)
    :on-success (lambda (_response)
                  (with-current-buffer (map-elt (agent-shell--state) :buffer)
@@ -3339,8 +3339,8 @@ prompting for a session to pick (still asks for confirmation)."
              :append t))
           (acp-send-request
            :client (map-elt (agent-shell--state) :client)
-           :request `((:method . "session/list")
-                      (:params . ((cwd . ,(agent-shell--resolve-path (agent-shell-cwd)))))))
+           :request (acp-make-session-list-request
+                     :cwd (agent-shell--resolve-path (agent-shell-cwd))))
            :buffer (current-buffer)
            :on-success (lambda (response)
                          (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
@@ -3492,9 +3492,8 @@ prompting for a session to pick (still asks for confirmation)."
      :append t))
   (acp-send-request
    :client (map-elt (agent-shell--state) :client)
-   :request `((:method . "session/list")
-              ;; Must remove trailing / to make sure Claude recognizes previous CWDs.
-              (:params . ((cwd . ,(agent-shell--resolve-path (string-remove-suffix "/" (agent-shell-cwd)))))))
+   :request (acp-make-session-list-request
+             :cwd (agent-shell--resolve-path (agent-shell-cwd)))
    :buffer (current-buffer)
    :on-success (lambda (response)
                  (let* ((sessions (append (or (map-elt response 'sessions) '()) nil))
@@ -3514,12 +3513,17 @@ prompting for a session to pick (still asks for confirmation)."
                           :append t)
                          (acp-send-request
                           :client (map-elt (agent-shell--state) :client)
-                          :request `((:method . ,(if (map-elt (agent-shell--state) :supports-session-load)
-                                                     "session/load"
-                                                   "session/resume"))
-                                     (:params . ((sessionId . ,session-id)
-                                                 (cwd . ,(agent-shell--resolve-path (string-remove-suffix "/" (agent-shell-cwd))))
-                                                 (mcpServers . ,(or (agent-shell--mcp-servers) [])))))
+                          :request (let ((cwd (agent-shell--resolve-path (agent-shell-cwd)))
+                                        (mcp-servers (agent-shell--mcp-servers)))
+                                    (if (map-elt (agent-shell--state) :supports-session-load)
+                                        (acp-make-session-load-request
+                                         :session-id session-id
+                                         :cwd cwd
+                                         :mcp-servers mcp-servers)
+                                      (acp-make-session-resume-request
+                                       :session-id session-id
+                                       :cwd cwd
+                                       :mcp-servers mcp-servers)))
                           :buffer (current-buffer)
                           :on-success (lambda (load-response)
                                         (agent-shell--set-session-from-response
