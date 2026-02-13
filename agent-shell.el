@@ -530,7 +530,6 @@ HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
         (cons :supports-session-list nil)
         (cons :supports-session-load nil)
         (cons :supports-session-resume nil)
-        (cons :supports-session-delete nil)
         (cons :prompt-capabilities nil)
         (cons :pending-requests nil)
         (cons :usage (list (cons :total-tokens 0)
@@ -820,7 +819,6 @@ When FORCE is non-nil, skip confirmation prompt."
   "p" #'agent-shell-previous-item
   "C-<tab>" #'agent-shell-cycle-session-mode
   "C-c C-c" #'agent-shell-interrupt
-  "C-c C-d" #'agent-shell-delete-session
   "C-c C-m" #'agent-shell-set-session-mode
   "C-c C-v" #'agent-shell-set-session-model
   "C-c C-o" #'agent-shell-other-buffer)
@@ -2766,10 +2764,6 @@ Must provide ON-INITIATED (lambda ())."
                                (and (listp acp-session-capabilities)
                                     (assq 'list acp-session-capabilities)
                                     t))
-                     (map-put! agent-shell--state :supports-session-delete
-                               (and (listp acp-session-capabilities)
-                                    (assq 'delete acp-session-capabilities)
-                                    t))
                      (map-put! agent-shell--state :supports-session-resume
                                (and (listp acp-session-capabilities)
                                     (assq 'resume acp-session-capabilities)
@@ -2982,153 +2976,6 @@ Falls back to latest session in batch mode (e.g. tests)."
                                        new-session-choice)))
       (map-elt choices selection)))))
 
-
-(defun agent-shell--prompt-select-session-to-delete (acp-sessions)
-  "Prompt to choose one from ACP-SESSIONS for deletion.
-
-Return selected session alist, or nil if user quit."
-  (when acp-sessions
-    (let* ((choices (mapcar (lambda (acp-session)
-                              (cons (agent-shell--session-choice-label acp-session)
-                                    acp-session))
-                            acp-sessions))
-           (selection (completing-read "Delete session: "
-                                       (mapcar #'car choices)
-                                       nil t)))
-      (cdr (assoc selection choices)))))
-
-(defun agent-shell--select-session-to-delete (acp-sessions)
-  "Select a session from ACP-SESSIONS for deletion."
-  (if noninteractive
-      (car acp-sessions)
-    (agent-shell--prompt-select-session-to-delete acp-sessions)))
-
-(defun agent-shell--clear-session-state ()
-  "Reset current session-scoped state for the active shell."
-  (let* ((state (agent-shell--state))
-         (session (or (map-elt state :session)
-                      (list (cons :id nil)
-                            (cons :mode-id nil)
-                            (cons :modes nil)))))
-    (map-put! session :id nil)
-    (map-put! session :mode-id nil)
-    (map-put! session :modes nil)
-    ;; Clear optional fields if they were previously populated.
-    (map-put! session :model-id nil)
-    (map-put! session :models nil)
-    (map-put! state :session session)
-    (map-put! state :set-session-mode nil)
-    (map-put! state :set-model nil)
-    (map-put! state :tool-calls nil)
-    (map-put! state :available-commands nil)
-    (agent-shell--update-header-and-mode-line)))
-
-(cl-defun agent-shell--delete-session-by-id (&key shell-buffer acp-session-id on-success)
-  "Delete ACP-SESSION-ID via ACP using SHELL-BUFFER.
-
-ON-SUCCESS is called with no args after successful delete."
-  (unless acp-session-id
-    (error "Missing required argument: :acp-session-id"))
-  (with-current-buffer (map-elt (agent-shell--state) :buffer)
-    (agent-shell--update-fragment
-     :state (agent-shell--state)
-     :block-id "session_delete"
-     :label-left (propertize "Deleting session" 'font-lock-face 'font-lock-doc-markup-face)
-     :body (format "Requesting deletion for %s..." acp-session-id)
-     :append t))
-  (acp-send-request
-   :client (map-elt (agent-shell--state) :client)
-   :request (acp-make-session-delete-request
-             :session-id acp-session-id)
-   :buffer (current-buffer)
-   :on-success (lambda (_response)
-                 (with-current-buffer (map-elt (agent-shell--state) :buffer)
-                   (agent-shell--update-fragment
-                    :state (agent-shell--state)
-                    :block-id "session_delete"
-                    :body "\n\nDone"
-                    :append t))
-                 (when on-success
-                   (funcall on-success)))
-   :on-failure (agent-shell--make-error-handler
-                :state (agent-shell--state) :shell-buffer shell-buffer)))
-
-(defun agent-shell-delete-session (&optional force-current)
-  "Delete an existing agent session from the agent's session history.
-
-This requires the agent to support the experimental ACP method
-\"session/delete\".
-
-With prefix argument FORCE-CURRENT, delete the current session without
-prompting for a session to pick (still asks for confirmation)."
-  (interactive "P")
-  (unless (or (derived-mode-p 'agent-shell-mode)
-              (derived-mode-p 'agent-shell-viewport-view-mode)
-              (derived-mode-p 'agent-shell-viewport-edit-mode))
-    (user-error "Not in an agent-shell buffer"))
-  (let* ((shell-buffer (if (derived-mode-p 'agent-shell-mode)
-                           (current-buffer)
-                         (or (agent-shell-viewport--shell-buffer)
-                             (user-error "No shell buffer available")))))
-    (with-current-buffer shell-buffer
-      (unless (map-elt (agent-shell--state) :client)
-        (user-error "Agent not initialized"))
-      (unless (map-elt (agent-shell--state) :supports-session-delete)
-        (user-error "Agent does not support session/delete"))
-      (let* ((current-session-id (map-nested-elt (agent-shell--state) '(:session :id))))
-        (cond
-         ((and force-current current-session-id)
-          (when (y-or-n-p (format "Delete current session %s? " current-session-id))
-            (agent-shell--delete-session-by-id
-             :shell-buffer shell-buffer
-             :acp-session-id current-session-id
-             :on-success (lambda ()
-                           (agent-shell--clear-session-state)
-                           (message "Deleted session %s" current-session-id)))))
-         ((map-elt (agent-shell--state) :supports-session-list)
-          (with-current-buffer (map-elt (agent-shell--state) :buffer)
-            (agent-shell--update-fragment
-             :state (agent-shell--state)
-             :block-id "session_delete"
-             :label-left (propertize "Deleting session" 'font-lock-face 'font-lock-doc-markup-face)
-             :body "\n\nLooking for existing sessions..."
-             :append t))
-          (acp-send-request
-           :client (map-elt (agent-shell--state) :client)
-           :request (acp-make-session-list-request
-                     :cwd (agent-shell--resolve-path (agent-shell-cwd)))
-           :buffer (current-buffer)
-           :on-success (lambda (acp-response)
-                         (let* ((acp-sessions (append (or (map-elt acp-response 'sessions) '()) nil))
-                                (acp-session (agent-shell--select-session-to-delete acp-sessions))
-                                (acp-session-id (and acp-session
-                                                     (map-elt acp-session 'sessionId))))
-                           (cond
-                            ((not acp-session-id)
-                             (message "No session selected"))
-                            ((not (y-or-n-p (format "Delete session %s? " acp-session-id)))
-                             (message "Cancelled"))
-                            (t
-                             (agent-shell--delete-session-by-id
-                              :shell-buffer shell-buffer
-                              :acp-session-id acp-session-id
-                              :on-success (lambda ()
-                                            (when (and current-session-id
-                                                       (equal acp-session-id current-session-id))
-                                              (agent-shell--clear-session-state))
-                                            (message "Deleted session %s" acp-session-id)))))))
-           :on-failure (agent-shell--make-error-handler
-                        :state (agent-shell--state) :shell-buffer shell-buffer)))
-         (current-session-id
-          (when (y-or-n-p (format "Delete current session %s? " current-session-id))
-            (agent-shell--delete-session-by-id
-             :shell-buffer shell-buffer
-             :acp-session-id current-session-id
-             :on-success (lambda ()
-                           (agent-shell--clear-session-state)
-                           (message "Deleted session %s" current-session-id)))))
-         (t
-          (user-error "No session to delete")))))))
 
 (cl-defun agent-shell--set-session-from-response (&key acp-response acp-session-id)
   "Set active session state from ACP-RESPONSE and ACP-SESSION-ID."
