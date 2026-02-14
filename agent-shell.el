@@ -846,8 +846,10 @@ Flow:
               (shell-maker--current-request-id))
     (cond ((not (map-elt (agent-shell--state) :client))
            ;; Needs a client
-           (agent-shell-heartbeat-start
-            :heartbeat (map-elt agent-shell--state :heartbeat))
+           (when (and agent-shell-show-busy-indicator
+                      (not command))
+             (agent-shell-heartbeat-start
+              :heartbeat (map-elt agent-shell--state :heartbeat)))
            (when-let ((viewport-buffer (agent-shell-viewport--buffer
                                         :shell-buffer shell-buffer
                                         :existing-only t)))
@@ -1998,7 +2000,8 @@ variable (see makunbound)"))
                                                     (when (get-buffer-window shell-buffer)
                                                       (with-current-buffer shell-buffer
                                                         (agent-shell--update-header-and-mode-line)))
-                                                    (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                                    (when-let* ((using-viewports agent-shell-prefer-viewport-interaction)
+                                                                (viewport-buffer (agent-shell-viewport--buffer
                                                                                   :shell-buffer shell-buffer
                                                                                   :existing-only t))
                                                                 ((get-buffer-window viewport-buffer)))
@@ -3163,8 +3166,9 @@ If FILE-PATH is not an image, returns nil."
          (attached-files (agent-shell--collect-attached-files content-blocks)))
     (when attached-files
       (agent-shell--display-attached-files attached-files))
-    (agent-shell-heartbeat-start
-     :heartbeat (map-elt agent-shell--state :heartbeat))
+    (when agent-shell-show-busy-indicator
+      (agent-shell-heartbeat-start
+       :heartbeat (map-elt agent-shell--state :heartbeat)))
 
     (map-put! agent-shell--state :last-entry-type nil)
 
