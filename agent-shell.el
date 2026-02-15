@@ -1138,26 +1138,32 @@ otherwise returns COMMAND unchanged."
                   :navigation 'never))
                (map-put! state :last-entry-type "agent_message_chunk"))
               ((equal (map-elt update 'sessionUpdate) "user_message_chunk")
-               (unless (equal (map-elt state :last-entry-type) "user_message_chunk")
-                 (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
-                 (agent-shell--append-transcript
-                  :text (format "## User (%s)\n\n" (format-time-string "%F %T"))
-                  :file-path agent-shell--transcript-file))
-               (let-alist update
-                 (agent-shell--append-transcript
-                  :text (format "> %s\n" .content.text)
-                  :file-path agent-shell--transcript-file)
-                 (agent-shell--update-fragment
-                  :state state
-                  :block-id (format "%s-user_message_chunk"
-                                    (map-elt state :chunked-group-count))
-                  :label-left (propertize "User" 'font-lock-face 'font-lock-doc-markup-face)
-                  :body .content.text
-                  :create-new (not (equal (map-elt state :last-entry-type)
-                                          "user_message_chunk"))
-                  :append t
-                  :expanded agent-shell-user-message-expand-by-default
-                  :navigation 'never))
+               (let ((new-prompt-p (not (equal (map-elt state :last-entry-type)
+                                               "user_message_chunk"))))
+                 (when new-prompt-p
+                   (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+                   (agent-shell--append-transcript
+                    :text (format "## User (%s)\n\n" (format-time-string "%F %T"))
+                    :file-path agent-shell--transcript-file))
+                 (let-alist update
+                   (agent-shell--append-transcript
+                    :text (format "> %s\n" .content.text)
+                    :file-path agent-shell--transcript-file)
+                   (agent-shell--update-text
+                    :state state
+                    :block-id (format "%s-user_message_chunk"
+                                      (map-elt state :chunked-group-count))
+                    :text (if new-prompt-p
+                              (concat (propertize
+                                       (map-nested-elt
+                                        state '(:agent-config :shell-prompt))
+                                       'font-lock-face 'comint-highlight-prompt)
+                                      (propertize .content.text
+                                                  'font-lock-face 'comint-highlight-input))
+                            (propertize .content.text
+                                        'font-lock-face 'comint-highlight-input))
+                    :create-new new-prompt-p
+                    :append t)))
                (map-put! state :last-entry-type "user_message_chunk"))
               ((equal (map-elt update 'sessionUpdate) "plan")
                (let-alist update
@@ -2331,6 +2337,41 @@ by default."
              (markdown-overlays-put))
            (widen)))
        (run-hook-with-args 'agent-shell-section-functions range)))))
+
+(cl-defun agent-shell--update-text (&key state namespace-id block-id text append create-new)
+  "Update plain text entry in the shell buffer.
+
+Uses STATE's request count as namespace unless NAMESPACE-ID is given.
+BLOCK-ID uniquely identifies the entry.
+TEXT is the string to insert or append.
+APPEND and CREATE-NEW control update behavior."
+  (let ((ns (or namespace-id (map-elt state :request-count))))
+    (when-let (((map-elt state :buffer))
+               (viewport-buffer (agent-shell-viewport--buffer
+                                 :shell-buffer (map-elt state :buffer)
+                                 :existing-only t)))
+      (with-current-buffer viewport-buffer
+        (let ((inhibit-read-only t))
+          (agent-shell-ui-update-text
+           :namespace-id ns
+           :block-id block-id
+           :text text
+           :append append
+           :create-new create-new
+           :no-undo t))))
+    (with-current-buffer (map-elt state :buffer)
+      (shell-maker-with-auto-scroll-edit
+       (when-let* ((range (agent-shell-ui-update-text
+                           :namespace-id ns
+                           :block-id block-id
+                           :text text
+                           :append append
+                           :create-new create-new
+                           :no-undo t))
+                   (block-start (map-nested-elt range '(:block :start)))
+                   (block-end (map-nested-elt range '(:block :end))))
+         (let ((inhibit-read-only t))
+           (add-text-properties block-start block-end '(field output))))))))
 
 (defun agent-shell-toggle-logging ()
   "Toggle logging."
