@@ -2193,11 +2193,13 @@ variable (see makunbound)"))
              :shell-buffer shell-buffer
              :event 'session-selected
              :on-event (lambda (_event)
+                         (agent-shell-active-message-hide :active-message active-message)
                          (agent-shell--display-buffer shell-buffer)))
             (agent-shell-subscribe-to
              :shell-buffer shell-buffer
              :event 'session-selection-cancelled
              :on-event (lambda (_event)
+                         (agent-shell-active-message-hide :active-message active-message)
                          (kill-buffer shell-buffer))))
         (agent-shell--display-buffer shell-buffer)))
     shell-buffer))

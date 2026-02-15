@@ -47,7 +47,8 @@ Returns an active message alist for use with
       (when (timerp timer)
         (cancel-timer timer)))
     (when-let ((reporter (map-elt active-message :reporter)))
-      (progress-reporter-done reporter))))
+      (progress-reporter-done reporter)
+      (message nil))))
 
 (provide 'agent-shell-active-message)
 
