@@ -11,15 +11,15 @@
   ;; Test 1: No container runner configured (nil)
   (let ((agent-shell-container-command-runner nil))
     (should (equal (agent-shell--build-command-for-execution
-                    '("claude-code-acp"))
-                   '("claude-code-acp"))))
+                    '("claude-agent-acp"))
+                   '("claude-agent-acp"))))
 
   ;; Test 2: Static list runner
   (let ((agent-shell-container-command-runner
          '("devcontainer" "exec" "--workspace-folder" ".")))
     (should (equal (agent-shell--build-command-for-execution
-                    '("claude-code-acp"))
-                   '("devcontainer" "exec" "--workspace-folder" "." "claude-code-acp"))))
+                    '("claude-agent-acp"))
+                   '("devcontainer" "exec" "--workspace-folder" "." "claude-agent-acp"))))
 
   ;; Test 3, 4 & 5: Function runner with different agent identifiers
   (let ((agent-shell-container-command-runner
@@ -30,7 +30,7 @@
                ('gemini-cli '("docker" "exec" "gemini-dev" "--"))
                (_ '("devcontainer" "exec" ".")))))))
     (let ((test-cases '(((:identifier . claude-code)
-                         (:command . ("claude-code-acp"))
+                         (:command . ("claude-agent-acp"))
                          (:expected-prefix . ("docker" "exec" "claude-dev" "--")))
                         ((:identifier . gemini-cli)
                          (:command . ("gemini"))

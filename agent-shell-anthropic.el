@@ -90,7 +90,7 @@ when starting a new shell."
   :group 'agent-shell)
 
 (defcustom agent-shell-anthropic-claude-command
-  '("claude-code-acp")
+  '("claude-agent-acp")
   "Command and parameters for the Anthropic Claude client.
 
 The first element is the command name, and the rest are command parameters."
@@ -129,7 +129,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                    (agent-shell-anthropic-make-claude-client :buffer buffer))
    :default-model-id (lambda () agent-shell-anthropic-default-model-id)
    :default-session-mode-id (lambda () agent-shell-anthropic-default-session-mode-id)
-   :install-instructions "See https://github.com/zed-industries/claude-code-acp for installation."))
+   :install-instructions "See https://github.com/zed-industries/claude-agent-acp for installation."))
 
 (defun agent-shell-anthropic-start-claude-code ()
   "Start an interactive Claude Code agent shell."

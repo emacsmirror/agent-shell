@@ -8,17 +8,17 @@
   "Test agent-shell-anthropic-make-claude-client function."
   ;; Mock executable-find to always return the command path
   (cl-letf (((symbol-function 'executable-find)
-             (lambda (_) "/usr/bin/claude-code-acp")))
+             (lambda (_) "/usr/bin/claude-agent-acp")))
     ;; Test with API key authentication
     (let* ((agent-shell-anthropic-authentication '(:api-key "test-api-key"))
-           (agent-shell-anthropic-claude-command '("claude-code-acp" "--json"))
+           (agent-shell-anthropic-claude-command '("claude-agent-acp" "--json"))
            (agent-shell-anthropic-claude-environment '("DEBUG=1"))
            (test-buffer (get-buffer-create "*test-buffer*"))
            (client (agent-shell-anthropic-make-claude-client :buffer test-buffer)))
       (unwind-protect
           (progn
             (should (listp client))
-            (should (equal (map-elt client :command) "claude-code-acp"))
+            (should (equal (map-elt client :command) "claude-agent-acp"))
             (should (equal (map-elt client :command-params) '("--json")))
             (should (member "ANTHROPIC_API_KEY=test-api-key" (map-elt client :environment-variables)))
             (should (member "DEBUG=1" (map-elt client :environment-variables))))
@@ -27,7 +27,7 @@
 
     ;; Test with login authentication
     (let* ((agent-shell-anthropic-authentication '(:login t))
-           (agent-shell-anthropic-claude-command '("claude-code-acp" "--interactive"))
+           (agent-shell-anthropic-claude-command '("claude-agent-acp" "--interactive"))
            (agent-shell-anthropic-claude-environment '("VERBOSE=true"))
            (test-buffer (get-buffer-create "*test-buffer*"))
            (client (agent-shell-anthropic-make-claude-client :buffer test-buffer)))
@@ -41,7 +41,7 @@
 
     ;; Test with function-based API key
     (let* ((agent-shell-anthropic-authentication `(:api-key ,(lambda () "dynamic-key")))
-           (agent-shell-anthropic-claude-command '("claude-code-acp"))
+           (agent-shell-anthropic-claude-command '("claude-agent-acp"))
            (agent-shell-anthropic-claude-environment '())
            (test-buffer (get-buffer-create "*test-buffer*"))
            (client (agent-shell-anthropic-make-claude-client :buffer test-buffer))
@@ -53,7 +53,7 @@
 
     ;; Test error on invalid authentication
     (let* ((agent-shell-anthropic-authentication '())
-           (agent-shell-anthropic-claude-command '("claude-code-acp"))
+           (agent-shell-anthropic-claude-command '("claude-agent-acp"))
            (test-buffer (get-buffer-create "*test-buffer*")))
       (unwind-protect
           (should-error (agent-shell-anthropic-make-claude-client :buffer test-buffer)
@@ -63,7 +63,7 @@
 
     ;; Test with agent-shell-make-environment-variables and :inherit-env t
     (let* ((agent-shell-anthropic-authentication '(:api-key "test-key"))
-           (agent-shell-anthropic-claude-command '("claude-code-acp"))
+           (agent-shell-anthropic-claude-command '("claude-agent-acp"))
            (process-environment '("EXISTING_VAR=existing_value"))
            (agent-shell-anthropic-claude-environment (agent-shell-make-environment-variables
                                                       "NEW_VAR" "new_value"
