@@ -983,7 +983,7 @@ Flow:
                                     :state (agent-shell--state)
                                     :namespace-id "bootstrapping"
                                     :block-id "available_commands_update"
-                                    :label-left (propertize "Available commands" 'font-lock-face 'font-lock-doc-markup-face)))
+                                    :label-left (propertize "Available /commands" 'font-lock-face 'font-lock-doc-markup-face)))
                                  (when (and (map-nested-elt (agent-shell--state) '(:agent-config :default-model-id))
                                             (funcall (map-nested-elt (agent-shell--state)
                                                                      '(:agent-config :default-model-id)))
@@ -1300,7 +1300,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
                   :state state
                   :namespace-id "bootstrapping"
                   :block-id "available_commands_update"
-                  :label-left (propertize "Available commands" 'font-lock-face 'font-lock-doc-markup-face)
+                  :label-left (propertize "Available /commands" 'font-lock-face 'font-lock-doc-markup-face)
                   :body (agent-shell--format-available-commands (map-elt update 'availableCommands))))
                (map-put! state :last-entry-type "available_commands_update"))
               ((equal (map-elt update 'sessionUpdate) "current_mode_update")
