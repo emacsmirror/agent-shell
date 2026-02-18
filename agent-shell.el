@@ -4759,7 +4759,7 @@ When PICK-SHELL is non-nil, prompt for which shell buffer to use."
                           (agent-shell--shell-buffer))))
     (agent-shell-insert
      :text (agent-shell--get-region-context
-            :deactivate t :no-error t
+            :deactivate t
             :agent-cwd (with-current-buffer shell-buffer
                          (agent-shell-cwd)))
      :shell-buffer shell-buffer)))
