@@ -1207,5 +1207,59 @@ code block content with spaces
         (should session-init-called)
         (should (equal (map-nested-elt agent-shell--state '(:session :id)) "new-session-789"))))))
 
+(ert-deftest agent-shell--outgoing-request-decorator-reaches-client ()
+  "Test that :outgoing-request-decorator from state reaches the ACP client."
+  (with-temp-buffer
+    (let* ((my-decorator (lambda (request) request))
+           (agent-shell--state (agent-shell--make-state
+                                :agent-config nil
+                                :buffer (current-buffer)
+                                :client-maker (lambda (_buffer)
+                                                (agent-shell--make-acp-client
+                                                 :command "cat"
+                                                 :context-buffer (current-buffer)))
+                                :outgoing-request-decorator my-decorator)))
+      ;; setq-local needed for buffer-local-value in agent-shell--make-acp-client
+      (setq-local agent-shell--state agent-shell--state)
+      (let ((client (funcall (map-elt agent-shell--state :client-maker)
+                             (current-buffer))))
+        (should (eq (map-elt client :outgoing-request-decorator) my-decorator))))))
+
+(ert-deftest agent-shell--outgoing-request-decorator-modifies-request ()
+  "Test that :outgoing-request-decorator modifies the sent request."
+  (with-temp-buffer
+    (let* ((sent-json nil)
+           (decorator (lambda (request)
+                        (when (equal (map-elt request :method) "session/new")
+                          (map-put! request :params
+                                    (cons '(_meta . ((systemPrompt . ((append . "extra instructions")))))
+                                          (map-elt request :params))))
+                        request))
+           (agent-shell--state (agent-shell--make-state
+                                :agent-config nil
+                                :buffer (current-buffer)
+                                :client-maker (lambda (_buffer)
+                                                (agent-shell--make-acp-client
+                                                 :command "cat"
+                                                 :context-buffer (current-buffer)))
+                                :outgoing-request-decorator decorator)))
+      (setq-local agent-shell--state agent-shell--state)
+      (let ((client (funcall (map-elt agent-shell--state :client-maker)
+                             (current-buffer))))
+        ;; Give client a fake process so acp--request-sender proceeds
+        (map-put! client :process (start-process "fake" nil "cat"))
+        (cl-letf (((symbol-function 'process-send-string)
+                   (lambda (_proc json)
+                     (setq sent-json json))))
+          (acp-send-request
+           :client client
+           :request (acp-make-session-new-request :cwd "/tmp")
+           :on-success #'ignore))
+        (delete-process (map-elt client :process))
+        ;; Verify the decorator's modification is in the sent JSON
+        (let ((parsed (json-parse-string (string-trim sent-json) :object-type 'alist)))
+          (should (equal (map-nested-elt parsed '(params _meta systemPrompt append))
+                         "extra instructions")))))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here

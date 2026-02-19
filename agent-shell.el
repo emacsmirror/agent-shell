@@ -208,7 +208,10 @@ wrapped with the runner prefix."
     (acp-make-client :command (car wrapped-command)
                      :command-params (cdr wrapped-command)
                      :environment-variables environment-variables
-                     :context-buffer context-buffer)))
+                     :context-buffer context-buffer
+                     :outgoing-request-decorator (when context-buffer
+                                                   (map-elt (buffer-local-value 'agent-shell--state context-buffer)
+                                                            :outgoing-request-decorator)))))
 
 (defcustom agent-shell-text-file-capabilities t
   "Whether agents are initialized with read/write text file capabilities.
@@ -547,15 +550,17 @@ the session and returns the appropriate endpoint:
   :type '(repeat (choice (alist :key-type symbol :value-type sexp) function))
   :group 'agent-shell)
 
-(cl-defun agent-shell--make-state (&key agent-config buffer client-maker needs-authentication authenticate-request-maker heartbeat)
+(cl-defun agent-shell--make-state (&key agent-config buffer client-maker needs-authentication authenticate-request-maker heartbeat outgoing-request-decorator)
   "Construct shell agent state with AGENT-CONFIG and BUFFER.
 
 Shell state is provider-dependent and needs CLIENT-MAKER, NEEDS-AUTHENTICATION,
-HEARTBEAT, and AUTHENTICATE-REQUEST-MAKER."
+HEARTBEAT, AUTHENTICATE-REQUEST-MAKER, and optionally
+OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
   (list (cons :agent-config agent-config)
         (cons :buffer buffer)
         (cons :client nil)
         (cons :client-maker client-maker)
+        (cons :outgoing-request-decorator outgoing-request-decorator)
         (cons :heartbeat heartbeat)
         (cons :initialized nil)
         (cons :needs-authentication needs-authentication)
@@ -745,13 +750,17 @@ If currently visiting an `agent-shell', transfer latest input."
         (agent-shell-viewport--show-buffer :override input))
     (agent-shell-viewport--show-buffer)))
 
-(cl-defun agent-shell-start (&key config)
+(cl-defun agent-shell-start (&key config outgoing-request-decorator)
   "Programmatically start shell with CONFIG.
 
-See `agent-shell-make-agent-config' for config format."
+See `agent-shell-make-agent-config' for config format.
+
+OUTGOING-REQUEST-DECORATOR is an optional function passed through to
+`acp-make-client'.  See its docstring for details."
   (agent-shell--start :config config
                       :no-focus nil
-                      :new-session t))
+                      :new-session t
+                      :outgoing-request-decorator outgoing-request-decorator))
 
 (cl-defun agent-shell--config-icon (&key config)
   "Create icon string for CONFIG if available and icons are enabled.
@@ -2137,13 +2146,14 @@ FUNCTION should be a function accepting keyword arguments (&key ...)."
                    (list (car pair) (cdr pair)))
                  alist)))
 
-(cl-defun agent-shell--start (&key config no-focus new-session)
+(cl-defun agent-shell--start (&key config no-focus new-session outgoing-request-decorator)
   "Programmatically start shell with CONFIG.
 
 See `agent-shell-make-agent-config' for config format.
 
 Set NO-FOCUS to start in background.
-Set NEW-SESSION to start a separate new session."
+Set NEW-SESSION to start a separate new session.
+OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'."
   (unless (version<= "0.85.1" shell-maker-version)
     (error "Please update shell-maker to version 0.85.1 or newer"))
   (unless (version<= "0.10.1" acp-package-version)
@@ -2201,6 +2211,7 @@ variable (see makunbound)"))
                                       :client-maker (map-elt config :client-maker)
                                       :needs-authentication (map-elt config :needs-authentication)
                                       :authenticate-request-maker (map-elt config :authenticate-request-maker)
+                                      :outgoing-request-decorator outgoing-request-decorator
                                       :agent-config config))
       ;; Initialize buffer-local shell-maker-config
       (setq-local agent-shell--shell-maker-config shell-maker-config)
