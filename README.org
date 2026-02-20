@@ -744,7 +744,9 @@ always go to Evil modes if you need to with ~C-z~).
 |                 | agent-shell-viewport-set-session-model                  | Set session model.                                                            |
 |                 | agent-shell-viewport-view-last                          | Display the last request/response interaction.                                |
 |                 | agent-shell-viewport-view-mode                          | Major mode for viewing agent shell prompts (read-only).                       |
-* Issues
+* Filing issues
+Please read through this section before filing issues or feature requests. I won't be able to help unless I have enough information to help. This section shows how to get the details I need.
+
 ** Can you add support for another agent?
 
 Does the agent support ACP ([[https://agentclientprotocol.com][Agent Client Protocol]])? If so, =agent-shell= can likely support this agent. Some agents have ACP support built-in (like [[https://github.com/google-gemini/gemini-cli][gemini-cli]]). Others require a separate ACP package (like [[https://github.com/zed-industries/claude-code-acp][claude-code-acp]] for [[https://github.com/anthropics/claude-code][claude-code]]). When filing a feature request to add a new agent, please include a link to the project supporting [[https://agentclientprotocol.com][Agent Client Protocol]] (built-in or otherwise).
@@ -791,129 +793,7 @@ File [[https://github.com/xenodium/agent-shell/issues][in agent-shell]], but ple
 
 * Contributing
 
-** Before Contributing
-
-Before implementing new features, please *file a feature request first* to discuss the proposal. This helps ensure alignment with the project's direction and prevents unnecessary work.
-
-As the maintainer, I must be mindful of all features I accept since I inherit the code to maintain it. Some features may be better suited as separate packages (like [[https://github.com/cmacrae/agent-shell-sidebar][agent-shell-sidebar]]).
-
-I'll gladly promote your package wherever possible.
-
-** Style (or personal preference TBH)
-
-There are lots of ways to accomplish things in elisp. While the following are merely personal preferences, as maintainer, it really simplifies things for me to try to limit the number of ways to accomplish things.
-
-*** Maps (use alists)
-
-This project relies on [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Association-Lists.html][alists]] for much of its functionality. Sure, we can also use plists, hashtables, etc.
-
-Unless we have a strong argument to use something else, please stick with =alists= (and =:= keywords).
-
-#+begin_src emacs-lisp
-  '((:species . "Cat")
-    (:name . "Whiskers")
-    (:age . 4)
-    (:color . "Gray")
-    (:favorite-toy . "Feather Wand"))
-#+end_src
-
-*** seq.el
-
-Accessing and working with lists? Please prefer =seq.el=, unless we have a strong argument to use an alternative.
-
-#+begin_src emacs-lisp :lexical no
-  (setq animals
-        (list
-         '((:species . "Cat")
-           (:name . "Whiskers")
-           (:age . 4)
-           (:color . "Gray"))
-         '((:species . "Dog")
-           (:name . "Buddy")
-           (:age . 6)
-           (:color . "Brown"))))
-
-  (seq-first animals)
-#+end_src
-
-*** map.el
-
-Accessing and working with =alists=? Please prefer =map.el= unless we have a strong argument to use an alternative.
-
-#+begin_src emacs-lisp :lexical no
-  (setq animal (seq-first animals))
-  (map-elt animal :species)
-#+end_src
-
-*** cl-lib (limited to =cl-defun=)
-
-While I'm a fan of =cl-defun=, please limit =cl= usage to =cl-defun= if possible. Nothing against =cl-lib=. I'm just limiting the surface and number of idioms I need to keep in my head to maintain the codebase. Often, =seq.el= and =map.el= can do the job just fine.
-
-=cl-defun=, on the other hand, please do! I'm a fan of named parameters (yay for self-documenting), so use =&key= if possible.
-
-#+begin_src emacs-lisp :lexical no
-  (cl-defun describe (&key animal)
-    "Describe an ANIMAL, which is an alist of properties like :species, :name, :age, :color."
-    (message "This is a %d-year-old %s %s named %s."
-             (map-elt animal :age 0)
-             (map-elt animal :color "Unknown Color")
-             (map-elt animal :species "Unknown Species")
-             (map-elt animal :name "Unnamed")))
-
-  (describe :animal '((:species . "Cat")
-                      (:name . "Whiskers")
-                      (:age . 4)
-                      (:color . "Gray")))
-#+end_src
-
-*** Avoid unnecessary =let=/local variables
-
-Prefer inlining single-use expressions rather than binding them to intermediate =let=, unless the offer significant readability improvements. LLM models tend to introduce unnecessary local variables for something like =map-elt= (the equivalent of saving =foo.someField= to a local var in other languages).
-
-#+begin_src emacs-lisp :lexical no
-  ;; Avoid
-  (let* ((usage (map-elt response 'usage))
-         (total-tokens (map-elt usage 'totalTokens)))
-    (do-something total-tokens))
-
-  ;; Prefer
-  (do-something (map-nested-elt response '(usage totalTokens)))
-#+end_src
-
-*** Move substantial functionality to separate files
-
-=agent-shell.el= is getting large. When adding substantial new functionality, move helper functions to a dedicated file (e.g. =agent-shell-completion.el=). You can keep the same =agent-shell--= function name prefix. See [[https://github.com/xenodium/agent-shell/commit/c60203934d577e88d03035038a1e247bb1ce0ded][this commit]] for an example of this transition.
-
-*** Code/feature consistency
-
-Please try to look for a similar feature in the code base and replicate an existing pattern usage if possible.
-
-*** Code Checks
-
-Before submitting a PR, please run:
-
-- =M-x checkdoc= - Ensures documentation consistency
-- =M-x byte-compile-file= - Identifies compilation warnings
-
-*** Tests
-
-I'm aware, we're a bit light on tests, but we started adding some tests. If adding a new feature, please try to add tests.
-
-Tests live under the tests directory:
-
-#+begin_src bash
-  ls tests/*tests.el
-#+end_src
-
-#+RESULTS:
-| tests/agent-shell-anthropic-tests.el |
-| tests/agent-shell-tests.el           |
-
-*** Running tests
-
-Opening any file under the =tests= directory will load the =agent-shell-run-all-tests= command.
-
-Run tests with =M-x agent-shell-run-all-tests=.
+See [[file:CONTRIBUTING.org][CONTRIBUTING.org]].
 
 * Contributors
 
