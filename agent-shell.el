@@ -1126,7 +1126,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
                                               (map-nested-elt update '(rawInput command))))
                               (cons :description (map-nested-elt update '(rawInput description)))
                               (cons :content (map-elt update 'content))
-                              (cons :rawInput (map-elt update 'rawInput)))
+                              (cons :raw-input (map-elt update 'rawInput)))
                         (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                           (list (cons :diff diff)))))
                (agent-shell--emit-event
@@ -1258,7 +1258,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
                                       ((not (map-nested-elt state `(:tool-calls ,.toolCallId :command)))))
                             (list (cons :command command)))
                           (when-let ((raw-input (map-elt update 'rawInput)))
-                            (list (cons :rawInput raw-input)))
+                            (list (cons :raw-input raw-input)))
                           (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                             (list (cons :diff diff)))))
                  (agent-shell--emit-event
@@ -1294,9 +1294,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                              :kind (map-nested-elt state `(:tool-calls ,.toolCallId :kind))
                              :description (map-nested-elt state `(:tool-calls ,.toolCallId :description))
                              :command (map-nested-elt state `(:tool-calls ,.toolCallId :command))
-                             :parameters (when agent-shell-transcript-include-parameters
-                                           (agent-shell--extract-tool-parameters
-                                            (map-nested-elt state `(:tool-calls ,.toolCallId :rawInput))))
+                             :parameters (agent-shell--extract-tool-parameters
+                                          (map-nested-elt state `(:tool-calls ,.toolCallId :raw-input)))
                              :output body-text)
                       :file-path agent-shell--transcript-file))
                    ;; Hide permission after sending response.
@@ -5530,15 +5529,6 @@ When nil, transcript saving is disabled."
                  (function :tag "Custom function"))
   :group 'agent-shell)
 
-(defcustom agent-shell-transcript-include-parameters nil
-  "Whether to include tool call parameters in transcript entries.
-When non-nil, parameters like filePath, offset, limit, pattern, etc.
-are included in transcript entries for tool calls.  This makes
-transcripts more detailed by showing exactly which files were read,
-what patterns were searched, and other tool-specific parameters."
-  :type 'boolean
-  :group 'agent-shell)
-
 (defun agent-shell--default-transcript-file-path ()
   "Generate a transcript file path in project root.
 
@@ -5604,33 +5594,41 @@ Returns the file path, or nil if disabled."
   "Extract and format tool parameters from RAW-INPUT.
 Returns a formatted string of key parameters, or nil if no relevant
 parameters found.  Excludes `command' and `description' as these are
-already shown separately in transcript entries."
-  (when raw-input
-    (let ((params '())
-          ;; Keys that are already displayed separately
-          (excluded-keys '(command description plan)))
-      ;; Iterate over all keys in raw-input
-      (map-apply (lambda (key value)
-                   (unless (or (memq key excluded-keys)
-                               (null value)
-                               (and (stringp value) (string-empty-p value)))
-                     (push (cons key value) params)))
-                 raw-input)
-      ;; Format as string if we found any parameters
-      (when params
-        (mapconcat (lambda (pair)
-                     (let ((key (car pair))
-                           (value (cdr pair)))
-                       (format "%s: %s"
-                               (symbol-name key)
-                               (cond
-                                ((stringp value) value)
-                                ((numberp value) (number-to-string value))
-                                ((eq value t) "true")
-                                ((eq value nil) "false")
-                                (t (prin1-to-string value))))))
-                   (nreverse params)
-                   "\n")))))
+already shown separately in transcript entries.
+
+For example, given RAW-INPUT:
+
+  \\='((filePath . \"/home/user/project/file.el\")
+    (offset . 10)
+    (limit . 20)
+    (command . \"grep -r foo\")
+    (description . \"Search for foo\"))
+
+returns:
+
+  \"filePath: /home/user/project/file.el
+  offset: 10
+  limit: 20\""
+  (when-let* ((raw-input)
+            (excluded-keys '(command description plan))
+            (params (seq-remove
+                     (lambda (pair)
+                       (let ((key (car pair))
+                             (value (cdr pair)))
+                         (or (memq key excluded-keys)
+                             (null value)
+                             (and (stringp value) (string-empty-p value)))))
+                     raw-input)))
+  (mapconcat (lambda (pair)
+               (format "%s: %s"
+                       (symbol-name (car pair))
+                       (cond
+                        ((stringp (cdr pair)) (cdr pair))
+                        ((numberp (cdr pair)) (number-to-string (cdr pair)))
+                        ((eq (cdr pair) t) "true")
+                        (t (prin1-to-string (cdr pair))))))
+             params
+             "\n")))
 
 (cl-defun agent-shell--make-transcript-tool-call-entry (&key status title kind description command parameters output)
   "Create a formatted transcript entry for a tool call.
