@@ -10,8 +10,10 @@ assignees: ''
 
 - [ ] *I agree to communicate with the author myself* (not AI-generated).
 - [ ] I've read the README's [Filing issues](https://github.com/xenodium/agent-shell?tab=readme-ov-file#filing-issues) section.
-- [ ] I'm running the latest agent-shell version.
-- [ ] I'm running the latest agent version (ie. Claude Code, Gemini CLI).
-- [ ] I'm running the latest agent ACP package (ie. claude-code-acp).
+- [ ] I'm running the latest versions (fill in below).
+  - agent-shell:
+  - acp.el:
+  - ACP package (e.g. claude-code-acp):
+  - Agent CLI (e.g. claude, gemini):
 - [ ] For requesting new agent support, I'm including a link to the ACP-capable agent or related ACP package.
-- [ ] For issues, I'm including ACP traffic (as per README).
+- [ ] For issues, I'm including [ACP traffic](https://github.com/xenodium/agent-shell?tab=readme-ov-file#how-do-i-viewget-agent-client-protocol-traffic) (as per README).

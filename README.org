@@ -747,6 +747,13 @@ always go to Evil modes if you need to with ~C-z~).
 * Filing issues
 Please read through this section before filing issues or feature requests. I won't be able to help unless I have enough information to help. This section shows how to get the details I need.
 
+- *Versions*: What version of =agent-shell=, =acp.el=, the ACP package (e.g. =claude-code-acp=), and the agent CLI (e.g. =claude=, =gemini=) are you running?
+- *Steps to reproduce*: What exact steps lead to the issue? Be specific about what you did and in what order.
+- *ACP traffic*: See [[https://github.com/xenodium/agent-shell?tab=readme-ov-file#how-do-i-viewget-agent-client-protocol-traffic][how to get ACP traffic]] above. This is the most useful piece of information for diagnosing issues.
+- *Screenshots*: A screenshot helps correlate what you see with the protocol data.
+- *Your agent-shell config*: Share any relevant =agent-shell= variable settings from your Emacs config.
+- *Profiling data* (for performance issues): Use =M-x profiler-start=, reproduce the issue, then =M-x profiler-report= (and =M-x profiler-stop=). Share the report.
+
 ** Can you add support for another agent?
 
 Does the agent support ACP ([[https://agentclientprotocol.com][Agent Client Protocol]])? If so, =agent-shell= can likely support this agent. Some agents have ACP support built-in (like [[https://github.com/google-gemini/gemini-cli][gemini-cli]]). Others require a separate ACP package (like [[https://github.com/zed-industries/claude-code-acp][claude-code-acp]] for [[https://github.com/anthropics/claude-code][claude-code]]). When filing a feature request to add a new agent, please include a link to the project supporting [[https://agentclientprotocol.com][Agent Client Protocol]] (built-in or otherwise).
