@@ -1125,7 +1125,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                               (cons :command (agent-shell--tool-call-command-to-string
                                               (map-nested-elt update '(rawInput command))))
                               (cons :description (map-nested-elt update '(rawInput description)))
-                              (cons :content (map-elt update 'content)))
+                              (cons :content (map-elt update 'content))
+                              (cons :raw-input (map-elt update 'rawInput)))
                         (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                           (list (cons :diff diff)))))
                (agent-shell--emit-event
@@ -1256,6 +1257,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                                                (map-nested-elt update '(rawInput command))))
                                       ((not (map-nested-elt state `(:tool-calls ,.toolCallId :command)))))
                             (list (cons :command command)))
+                          (when-let ((raw-input (map-elt update 'rawInput)))
+                            (list (cons :raw-input raw-input)))
                           (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                             (list (cons :diff diff)))))
                  (agent-shell--emit-event
@@ -1291,6 +1294,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                              :kind (map-nested-elt state `(:tool-calls ,.toolCallId :kind))
                              :description (map-nested-elt state `(:tool-calls ,.toolCallId :description))
                              :command (map-nested-elt state `(:tool-calls ,.toolCallId :command))
+                             :parameters (agent-shell--extract-tool-parameters
+                                          (map-nested-elt state `(:tool-calls ,.toolCallId :raw-input)))
                              :output body-text)
                       :file-path agent-shell--transcript-file))
                    ;; Hide permission after sending response.
@@ -5553,10 +5558,50 @@ Returns the file path, or nil if disabled."
       (error
        (message "Error writing to transcript: %S" err)))))
 
-(cl-defun agent-shell--make-transcript-tool-call-entry (&key status title kind description command output)
+(defun agent-shell--extract-tool-parameters (raw-input)
+  "Extract and format tool parameters from RAW-INPUT.
+Returns a formatted string of key parameters, or nil if no relevant
+parameters found.  Excludes `command' and `description' as these are
+already shown separately in transcript entries.
+
+For example, given RAW-INPUT:
+
+  \\='((filePath . \"/home/user/project/file.el\")
+    (offset . 10)
+    (limit . 20)
+    (command . \"grep -r foo\")
+    (description . \"Search for foo\"))
+
+returns:
+
+  \"filePath: /home/user/project/file.el
+  offset: 10
+  limit: 20\""
+  (when-let* ((raw-input)
+            (excluded-keys '(command description plan))
+            (params (seq-remove
+                     (lambda (pair)
+                       (let ((key (car pair))
+                             (value (cdr pair)))
+                         (or (memq key excluded-keys)
+                             (null value)
+                             (and (stringp value) (string-empty-p value)))))
+                     raw-input)))
+  (mapconcat (lambda (pair)
+               (format "%s: %s"
+                       (symbol-name (car pair))
+                       (cond
+                        ((stringp (cdr pair)) (cdr pair))
+                        ((numberp (cdr pair)) (number-to-string (cdr pair)))
+                        ((eq (cdr pair) t) "true")
+                        (t (prin1-to-string (cdr pair))))))
+             params
+             "\n")))
+
+(cl-defun agent-shell--make-transcript-tool-call-entry (&key status title kind description command parameters output)
   "Create a formatted transcript entry for a tool call.
 
-Includes STATUS, TITLE, KIND, DESCRIPTION, COMMAND, and OUTPUT."
+Includes STATUS, TITLE, KIND, DESCRIPTION, COMMAND, PARAMETERS, and OUTPUT."
   (concat
    (format "\n\n### Tool Call [%s]: %s\n"
            (or status "no status") (or title ""))
@@ -5567,6 +5612,8 @@ Includes STATUS, TITLE, KIND, DESCRIPTION, COMMAND, and OUTPUT."
      (format "\n**Description:** %s" description))
    (when command
      (format "\n**Command:** %s" command))
+   (when parameters
+     (format "\n**Parameters:**\n%s" parameters))
    "\n\n"
    "```"
    "\n"
