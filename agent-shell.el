@@ -2012,12 +2012,12 @@ for details."
        (t
         file-path))))))
 
-(defcustom agent-shell-status-short-labels
+(defcustom agent-shell-status-labels
   '(("pending" . ((:label . "wait") (:face . font-lock-comment-face)))
     ("in_progress" . ((:label . "busy") (:face . warning)))
     ("completed" . ((:label . "done") (:face . success)))
     ("failed" . ((:label . "error") (:face . error))))
-  "When non-nil, use short status labels for tool calls.
+  "When non-nil, use custom status labels for tool calls.
 
 The value should be an alist mapping status strings to alists
 with :label and :face keys, for example:
@@ -2038,10 +2038,10 @@ for all possible status values."
 (defun agent-shell--status-label (status)
   "Convert STATUS codes to user-visible labels.
 
-When `agent-shell-status-short-labels' is non-nil, look up STATUS
+When `agent-shell-status-labels' is non-nil, look up STATUS
 there first."
-  (let* ((config (or (when agent-shell-status-short-labels
-                       (map-elt agent-shell-status-short-labels status))
+  (let* ((config (or (when agent-shell-status-labels
+                       (map-elt agent-shell-status-labels status))
                      (pcase status
                        ("pending" '((:label . "pending") (:face . font-lock-comment-face)))
                        ("in_progress" '((:label . "in progress") (:face . warning)))
