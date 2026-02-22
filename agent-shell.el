@@ -2001,16 +2001,44 @@ for details."
        (t
         file-path))))))
 
+(defcustom agent-shell-status-short-labels
+  '(("pending" . ((:label . "wait") (:face . font-lock-comment-face)))
+    ("in_progress" . ((:label . "busy") (:face . warning)))
+    ("completed" . ((:label . "done") (:face . success)))
+    ("failed" . ((:label . "error") (:face . error))))
+  "When non-nil, use short status labels for tool calls.
+
+The value should be an alist mapping status strings to alists
+with :label and :face keys, for example:
+
+  \\='((\"pending\" . ((:label . \"wait\") (:face . font-lock-comment-face)))
+    (\"in_progress\" . ((:label . \"busy\") (:face . warning)))
+    (\"completed\" . ((:label . \"done\") (:face . success)))
+    (\"failed\" . ((:label . \"error\") (:face . error))))
+
+When nil, use the standard labels.
+
+See `https://agentclientprotocol.com/protocol/schema#toolcallstatus'
+for all possible status values."
+  :type '(alist :key-type string
+                :value-type (alist :key-type symbol :value-type sexp))
+  :group 'agent-shell)
+
 (defun agent-shell--status-label (status)
-  "Convert STATUS codes to user-visible labels."
-  (let* ((config (pcase status
-                   ("pending" '("pending" font-lock-comment-face))
-                   ("in_progress" '("in progress" warning))
-                   ("completed" '("completed" success))
-                   ("failed" '("failed" error))
-                   (_ '("unknown" warning))))
-         (label (car config))
-         (face (cadr config))
+  "Convert STATUS codes to user-visible labels.
+
+When `agent-shell-status-short-labels' is non-nil, look up STATUS
+there first."
+  (let* ((config (or (when agent-shell-status-short-labels
+                       (map-elt agent-shell-status-short-labels status))
+                     (pcase status
+                       ("pending" '((:label . "pending") (:face . font-lock-comment-face)))
+                       ("in_progress" '((:label . "in progress") (:face . warning)))
+                       ("completed" '((:label . "completed") (:face . success)))
+                       ("failed" '((:label . "failed") (:face . error)))
+                       (_ '((:label . "unknown") (:face . warning))))))
+         (label (map-elt config :label))
+         (face (map-elt config :face))
          ;; Wrap the label in [ and ] in TUI which cannot render the box border.
          (label-format (if (display-graphic-p) " %s " "[%s]")))
     (agent-shell--add-text-properties
