@@ -2085,12 +2085,21 @@ With INCLUDE-PROJECT
 Returns propertized labels in :status and :title propertized."
   (when-let ((tool-call (map-nested-elt state `(:tool-calls ,tool-call-id))))
     `((:status . ,(agent-shell--make-status-kind-label
-                    :status (map-elt tool-call :status)
-                    :kind (map-elt tool-call :kind)))
-      (:title . ,(let* ((title (when (map-elt tool-call :title)
-                                 (agent-shell--shorten-paths (map-elt tool-call :title))))
-                        (description (when (map-elt tool-call :description)
-                                       (agent-shell--shorten-paths (map-elt tool-call :description)))))
+                   :status (map-elt tool-call :status)
+                   :kind (map-elt tool-call :kind)))
+      (:title . ,(let ((title (when-let ((text (agent-shell--shorten-paths
+                                                (map-elt tool-call :title))))
+                                ;; Strip kind prefix from title to avoid
+                                ;; redundancy "[read] Read file.el" becomes
+                                ;; "[read] file.el"
+                                (if (and (map-elt tool-call :kind)
+                                         (string-match-p (concat "\\`" (regexp-quote
+                                                                       (map-elt tool-call :kind)) " ")
+                                                         (downcase text)))
+                                    (string-trim-left (substring text (length (map-elt tool-call :kind))))
+                                  text)))
+                       (description (agent-shell--shorten-paths
+                                     (map-elt tool-call :description))))
                    (cond ((and title description
                                (not (equal (string-remove-prefix "`" (string-remove-suffix "`" (string-trim title)))
                                            (string-remove-prefix "`" (string-remove-suffix "`" (string-trim description))))))
