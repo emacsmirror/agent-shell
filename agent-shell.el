@@ -1125,7 +1125,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                               (cons :command (agent-shell--tool-call-command-to-string
                                               (map-nested-elt update '(rawInput command))))
                               (cons :description (map-nested-elt update '(rawInput description)))
-                              (cons :content (map-elt update 'content)))
+                              (cons :content (map-elt update 'content))
+                              (cons :raw-input (map-elt update 'rawInput)))
                         (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                           (list (cons :diff diff)))))
                (agent-shell--emit-event
@@ -1156,7 +1157,13 @@ COMMAND, when present, may be a shell command string or an argv vector."
                  ;;          (equal (map-elt state :last-entry-type) "agent_thought_chunk"))
                  (unless (equal (map-elt state :last-entry-type)
                                 "agent_thought_chunk")
-                   (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count))))
+                   (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+                   (agent-shell--append-transcript
+                    :text (format "## Agent's Thoughts (%s)\n\n" (format-time-string "%F %T"))
+                    :file-path agent-shell--transcript-file))
+                 (agent-shell--append-transcript
+                  :text .content.text
+                  :file-path agent-shell--transcript-file)
                  (agent-shell--update-fragment
                   :state state
                   :block-id (format "%s-agent_thought_chunk"
@@ -1174,7 +1181,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
                (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
                  (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
                  (agent-shell--append-transcript
-                  :text (format "## Agent (%s)\n\n" (format-time-string "%F %T"))
+                  :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
                   :file-path agent-shell--transcript-file))
                (let-alist update
                  (agent-shell--append-transcript
@@ -1256,6 +1263,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                                                (map-nested-elt update '(rawInput command))))
                                       ((not (map-nested-elt state `(:tool-calls ,.toolCallId :command)))))
                             (list (cons :command command)))
+                          (when-let ((raw-input (map-elt update 'rawInput)))
+                            (list (cons :raw-input raw-input)))
                           (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
                             (list (cons :diff diff)))))
                  (agent-shell--emit-event
@@ -1291,6 +1300,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                              :kind (map-nested-elt state `(:tool-calls ,.toolCallId :kind))
                              :description (map-nested-elt state `(:tool-calls ,.toolCallId :description))
                              :command (map-nested-elt state `(:tool-calls ,.toolCallId :command))
+                             :parameters (agent-shell--extract-tool-parameters
+                                          (map-nested-elt state `(:tool-calls ,.toolCallId :raw-input)))
                              :output body-text)
                       :file-path agent-shell--transcript-file))
                    ;; Hide permission after sending response.
@@ -5581,28 +5592,89 @@ Returns the file path, or nil if disabled."
       (error
        (message "Error writing to transcript: %S" err)))))
 
-(cl-defun agent-shell--make-transcript-tool-call-entry (&key status title kind description command output)
+(defun agent-shell--extract-tool-parameters (raw-input)
+  "Extract and format tool parameters from RAW-INPUT.
+Returns a formatted string of key parameters, or nil if no relevant
+parameters found.  Excludes `command' and `description' as these are
+already shown separately in transcript entries.
+
+For example, given RAW-INPUT:
+
+  \\='((filePath . \"/home/user/project/file.el\")
+    (offset . 10)
+    (limit . 20)
+    (command . \"grep -r foo\")
+    (description . \"Search for foo\"))
+
+returns:
+
+  \"filePath: /home/user/project/file.el
+  offset: 10
+  limit: 20\""
+  (when-let* ((raw-input)
+            (excluded-keys '(command description plan))
+            (params (seq-remove
+                     (lambda (pair)
+                       (let ((key (car pair))
+                             (value (cdr pair)))
+                         (or (memq key excluded-keys)
+                             (null value)
+                             (and (stringp value) (string-empty-p value)))))
+                     raw-input)))
+  (mapconcat (lambda (pair)
+               (format "%s: %s"
+                       (symbol-name (car pair))
+                       (cond
+                        ((stringp (cdr pair)) (cdr pair))
+                        ((numberp (cdr pair)) (number-to-string (cdr pair)))
+                        ((eq (cdr pair) t) "true")
+                        (t (prin1-to-string (cdr pair))))))
+             params
+             "\n")))
+
+(defun agent-shell--longest-backtick-run (text)
+  "Return the length of the longest consecutive backtick sequence in TEXT.
+
+For example:
+
+  (agent-shell--longest-backtick-run \"no backticks\")
+    => 0
+  (agent-shell--longest-backtick-run \"has ``` three\")
+    => 3
+  (agent-shell--longest-backtick-run \"has ```` four and ``` three\")
+    => 4"
+  (let ((pos 0)
+        (max-run 0))
+    (while (string-match "`+" text pos)
+      (setq max-run (max max-run (- (match-end 0) (match-beginning 0)))
+            pos (match-end 0)))
+    max-run))
+
+(cl-defun agent-shell--make-transcript-tool-call-entry (&key status title kind description command parameters output)
   "Create a formatted transcript entry for a tool call.
 
-Includes STATUS, TITLE, KIND, DESCRIPTION, COMMAND, and OUTPUT."
-  (concat
-   (format "\n\n### Tool Call [%s]: %s\n"
-           (or status "no status") (or title ""))
-   (when kind
-     (format "\n**Tool:** %s" kind))
-   (format "\n**Timestamp:** %s" (format-time-string "%F %T"))
-   (when description
-     (format "\n**Description:** %s" description))
-   (when command
-     (format "\n**Command:** %s" command))
-   "\n\n"
-   "```"
-   "\n"
-   (string-trim
-    (string-trim (string-trim output) "^```" "```$"))
-   "\n"
-   "```"
-   "\n"))
+Includes STATUS, TITLE, KIND, DESCRIPTION, COMMAND, PARAMETERS, and OUTPUT."
+  (let* ((trimmed (string-trim output))
+         (fence (make-string (max 3 (1+ (agent-shell--longest-backtick-run trimmed))) ?`)))
+    (concat
+     (format "\n\n### Tool Call [%s]: %s\n"
+             (or status "no status") (or title ""))
+     (when kind
+       (format "\n**Tool:** %s" kind))
+     (format "\n**Timestamp:** %s" (format-time-string "%F %T"))
+     (when description
+       (format "\n**Description:** %s" description))
+     (when command
+       (format "\n**Command:** %s" command))
+     (when parameters
+       (format "\n**Parameters:**\n%s" parameters))
+     "\n\n"
+     fence
+     "\n"
+     trimmed
+     "\n"
+     fence
+     "\n")))
 
 (defun agent-shell-open-transcript ()
   "Open the transcript file for the current `agent-shell' buffer."

@@ -679,7 +679,7 @@ output with spaces
 ```
 ")))
 
-    ;; Test that code blocks in output are stripped
+    ;; Test that code blocks in output are stripped and output containing backtick fences gets a longer outer fence
     (let ((entry (agent-shell--make-transcript-tool-call-entry
                   :status "completed"
                   :title "test"
@@ -690,12 +690,14 @@ output with spaces
 
 **Timestamp:** 2025-11-02 18:17:41
 
+````
 ```
 code block content
 ```
+````
 ")))
 
-    ;; Test that code blocks in output are stripped
+    ;; Test that output containing backtick fences with whitespace is trimmed and output containing backtick fences gets a longer outer fence
     (let ((entry (agent-shell--make-transcript-tool-call-entry
                   :status "completed"
                   :title "test"
@@ -706,10 +708,38 @@ code block content
 
 **Timestamp:** 2025-11-02 18:17:41
 
+````
 ```
 code block content with spaces
 ```
+````
+")))
+
+    ;; Test output with 4-backtick fences gets 5-backtick outer fence
+    (let ((entry (agent-shell--make-transcript-tool-call-entry
+                  :status "completed"
+                  :title "test"
+                  :output "````\ncode block content\n````")))
+      (should (equal entry "\n\n### Tool Call [completed]: test
+
+**Timestamp:** 2025-11-02 18:17:41
+
+`````
+````
+code block content
+````
+`````
 ")))))
+
+(ert-deftest agent-shell--longest-backtick-run-test ()
+  "Test `agent-shell--longest-backtick-run'."
+  (should (= (agent-shell--longest-backtick-run "") 0))
+  (should (= (agent-shell--longest-backtick-run "no backticks here") 0))
+  (should (= (agent-shell--longest-backtick-run "has `one` inline") 1))
+  (should (= (agent-shell--longest-backtick-run "has ``` three") 3))
+  (should (= (agent-shell--longest-backtick-run "```elisp\n(foo)\n```") 3))
+  (should (= (agent-shell--longest-backtick-run "has ```` four and ``` three") 4))
+  (should (= (agent-shell--longest-backtick-run "``````") 6)))
 
 (ert-deftest agent-shell-mcp-servers-test ()
   "Test `agent-shell-mcp-servers' function normalization."
@@ -1260,6 +1290,81 @@ code block content with spaces
         (let ((parsed (json-parse-string (string-trim sent-json) :object-type 'alist)))
           (should (equal (map-nested-elt parsed '(params _meta systemPrompt append))
                          "extra instructions")))))))
+
+(ert-deftest agent-shell--extract-tool-parameters-test ()
+  "Test `agent-shell--extract-tool-parameters' function."
+  ;; Test nil input
+  (should (null (agent-shell--extract-tool-parameters nil)))
+
+  ;; Test empty alist
+  (should (null (agent-shell--extract-tool-parameters '())))
+
+  ;; Test with filePath parameter
+  (should (equal (agent-shell--extract-tool-parameters
+                  '((filePath . "/home/user/file.txt")))
+                 "filePath: /home/user/file.txt"))
+
+  ;; Test with multiple parameters
+  (let ((result (agent-shell--extract-tool-parameters
+                 '((filePath . "/home/user/file.txt")
+                   (offset . 100)
+                   (limit . 50)))))
+    (should (string-match-p "filePath: /home/user/file.txt" result))
+    (should (string-match-p "offset: 100" result))
+    (should (string-match-p "limit: 50" result)))
+
+  ;; Test that command and description are excluded
+  (should (null (agent-shell--extract-tool-parameters
+                 '((command . "ls -la")
+                   (description . "List files")))))
+
+  ;; Test that command/description are excluded but other params included
+  (should (equal (agent-shell--extract-tool-parameters
+                  '((command . "ls -la")
+                    (description . "List files")
+                    (workdir . "/tmp")))
+                 "workdir: /tmp"))
+
+  ;; Test with boolean value
+  (should (equal (agent-shell--extract-tool-parameters
+                  '((replaceAll . t)))
+                 "replaceAll: true"))
+
+  ;; Test with nil value (should be excluded)
+  (should (null (agent-shell--extract-tool-parameters
+                 '((filePath . nil)))))
+
+  ;; Test with empty string (should be excluded)
+  (should (null (agent-shell--extract-tool-parameters
+                 '((pattern . "")))))
+
+  ;; Test plan is excluded (shown separately)
+  (should (null (agent-shell--extract-tool-parameters
+                 '((plan . "Step 1: do something"))))))
+
+(ert-deftest agent-shell--make-transcript-tool-call-entry-test ()
+  "Test `agent-shell--make-transcript-tool-call-entry' with parameters."
+  ;; Test basic entry without parameters
+  (let ((entry (agent-shell--make-transcript-tool-call-entry
+                :status "completed"
+                :title "Read file"
+                :kind "read"
+                :output "file content here")))
+    (should (string-match-p "### Tool Call \\[completed\\]: Read file" entry))
+    (should (string-match-p "\\*\\*Tool:\\*\\* read" entry))
+    (should (string-match-p "file content here" entry))
+    (should-not (string-match-p "\\*\\*Parameters:\\*\\*" entry)))
+
+  ;; Test entry with parameters
+  (let ((entry (agent-shell--make-transcript-tool-call-entry
+                :status "completed"
+                :title "Read file"
+                :kind "read"
+                :parameters "filePath: /home/user/test.txt\noffset: 100"
+                :output "file content here")))
+    (should (string-match-p "\\*\\*Parameters:\\*\\*" entry))
+    (should (string-match-p "filePath: /home/user/test.txt" entry))
+    (should (string-match-p "offset: 100" entry))))
 
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
