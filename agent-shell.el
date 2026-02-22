@@ -2012,49 +2012,52 @@ for details."
        (t
         file-path))))))
 
-(defcustom agent-shell-status-labels
-  '(("pending" . ((:label . "wait") (:face . font-lock-comment-face)))
-    ("in_progress" . ((:label . "busy") (:face . warning)))
-    ("completed" . ((:label . "done") (:face . success)))
-    ("failed" . ((:label . "error") (:face . error))))
-  "When non-nil, use custom status labels for tool calls.
+(defun agent-shell--default-status-kind-label (status kind)
+  "Default rendering for STATUS and KIND labels.
+STATUS is a string like \"completed\" or nil.
+KIND is a string like \"read\" or nil.
+Returns a propertized string or nil."
+  (let* ((status-config (pcase status
+                          ("pending" '(:label "wait" :face font-lock-comment-face))
+                          ("in_progress" '(:label "busy" :face warning))
+                          ("completed" '(:label "done" :face success))
+                          ("failed" '(:label "error" :face error))
+                          (_ '(:label "unknown" :face warning))))
+         (label-format (if (display-graphic-p) " %s " "[%s]"))
+         (status-text (when status
+                        (let ((label (plist-get status-config :label))
+                              (face (plist-get status-config :face)))
+                          (agent-shell--add-text-properties
+                           (propertize (format label-format label)
+                                       'font-lock-face 'default)
+                           'font-lock-face (list face '(:inverse-video t))))))
+         (kind-text (when kind
+                      (let ((box-color (face-foreground
+                                        (plist-get status-config :face) nil t)))
+                        (agent-shell--add-text-properties
+                         (propertize (format label-format kind)
+                                     'font-lock-face 'default)
+                         'font-lock-face `((:box (:color ,box-color))))))))
+    (concat status-text kind-text)))
 
-The value should be an alist mapping status strings to alists
-with :label and :face keys, for example:
+(defcustom agent-shell-status-kind-label-function
+  #'agent-shell--default-status-kind-label
+  "Function to render status and kind labels.
 
-  \\='((\"pending\" . ((:label . \"wait\") (:face . font-lock-comment-face)))
-    (\"in_progress\" . ((:label . \"busy\") (:face . warning)))
-    (\"completed\" . ((:label . \"done\") (:face . success)))
-    (\"failed\" . ((:label . \"error\") (:face . error))))
+Called with two arguments: STATUS (string or nil) and KIND (string or nil).
+Should return a propertized string or nil.
 
-When nil, use the standard labels.
+STATUS is one of: \"pending\", \"in_progress\", \"completed\", \"failed\".
+See URL `https://agentclientprotocol.com/protocol/schema#toolcallstatus'.
 
-See `https://agentclientprotocol.com/protocol/schema#toolcallstatus'
-for all possible status values."
-  :type '(alist :key-type string
-                :value-type (alist :key-type symbol :value-type sexp))
+KIND is the tool call kind string (e.g. \"read\", \"edit\", \"execute\") or nil.
+See URL `https://agentclientprotocol.com/protocol/tool-calls'."
+  :type 'function
   :group 'agent-shell)
 
-(defun agent-shell--status-label (status)
-  "Convert STATUS codes to user-visible labels.
-
-When `agent-shell-status-labels' is non-nil, look up STATUS
-there first."
-  (let* ((config (or (when agent-shell-status-labels
-                       (map-elt agent-shell-status-labels status))
-                     (pcase status
-                       ("pending" '((:label . "pending") (:face . font-lock-comment-face)))
-                       ("in_progress" '((:label . "in progress") (:face . warning)))
-                       ("completed" '((:label . "completed") (:face . success)))
-                       ("failed" '((:label . "failed") (:face . error)))
-                       (_ '((:label . "unknown") (:face . warning))))))
-         (label (map-elt config :label))
-         (face (map-elt config :face))
-         ;; Wrap the label in [ and ] in TUI which cannot render the box border.
-         (label-format (if (display-graphic-p) " %s " "[%s]")))
-    (agent-shell--add-text-properties
-     (propertize (format label-format label) 'font-lock-face 'default)
-     'font-lock-face (list face '(:box t)))))
+(cl-defun agent-shell--make-status-kind-label (&key status kind)
+  "Render STATUS and KIND using `agent-shell-status-kind-label-function'."
+  (funcall agent-shell-status-kind-label-function status kind))
 
 (defun agent-shell--shorten-paths (text &optional include-project)
   "Shorten file paths in TEXT relative to project root.
@@ -2081,23 +2084,9 @@ With INCLUDE-PROJECT
 
 Returns propertized labels in :status and :title propertized."
   (when-let ((tool-call (map-nested-elt state `(:tool-calls ,tool-call-id))))
-    `((:status . ,(let ((status (when (map-elt tool-call :status)
-                                  (agent-shell--status-label (map-elt tool-call :status))))
-                        (kind (when (map-elt tool-call :kind)
-                                ;; Wrap the label in [ and ] in TUI which cannot render the box border.
-                                (let* ((label-format (if (display-graphic-p) " %s " "[%s]")))
-                                  (agent-shell--add-text-properties
-                                   (propertize (format label-format (map-elt tool-call :kind))
-                                               'font-lock-face 'default)
-                                   'font-lock-face
-                                   `(:box t))))))
-                    (concat
-                     (when status
-                       status)
-                     (when (and status kind)
-                       " ")
-                     (when kind
-                       kind))))
+    `((:status . ,(agent-shell--make-status-kind-label
+                    :status (map-elt tool-call :status)
+                    :kind (map-elt tool-call :kind)))
       (:title . ,(let* ((title (when (map-elt tool-call :title)
                                  (agent-shell--shorten-paths (map-elt tool-call :title))))
                         (description (when (map-elt tool-call :description)
@@ -2120,7 +2109,7 @@ Returns propertized labels in :status and :title propertized."
    :data entries
    :columns (list
              (lambda (entry)
-               (agent-shell--status-label (map-elt entry 'status)))
+               (agent-shell--make-status-kind-label :status (map-elt entry 'status)))
              (lambda (entry)
                (map-elt entry 'content)))
    :separator " "
@@ -3162,7 +3151,7 @@ DATA is an optional alist of event-specific data."
    :namespace-id "bootstrapping"
    :block-id "starting"
    :label-left (format "%s %s"
-                       (agent-shell--status-label "in_progress")
+                       (agent-shell--make-status-kind-label :status "in_progress")
                        (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
    :body "Creating client..."
    :create-new t)
@@ -3186,7 +3175,7 @@ DATA is an optional alist of event-specific data."
    :namespace-id "bootstrapping"
    :block-id "starting"
    :label-left (format "%s %s"
-                       (agent-shell--status-label "in_progress")
+                       (agent-shell--make-status-kind-label :status "in_progress")
                        (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
    :body "\n\nSubscribing..."
    :append t)
@@ -3498,7 +3487,7 @@ Falls back to latest session in batch mode (e.g. tests)."
    :state agent-shell--state
    :block-id "starting"
    :label-left (format "%s %s"
-                       (agent-shell--status-label "completed")
+                       (agent-shell--make-status-kind-label :status "completed")
                        (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
    :body "\n\nReady"
    :namespace-id "bootstrapping"
@@ -3551,7 +3540,7 @@ Falls back to latest session in batch mode (e.g. tests)."
                   :state agent-shell--state
                   :block-id "starting"
                   :label-left (format "%s %s"
-                                      (agent-shell--status-label "completed")
+                                      (agent-shell--make-status-kind-label :status "completed")
                                       (propertize "Starting agent" 'font-lock-face 'font-lock-doc-markup-face))
                   :body "\n\nReady"
                   :namespace-id "bootstrapping"
@@ -3645,7 +3634,7 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                :namespace-id "bootstrapping"
                                                :block-id "resumed_session"
                                                :label-left (format "%s %s"
-                                                                   (agent-shell--status-label "completed")
+                                                                   (agent-shell--make-status-kind-label :status "completed")
                                                                    (propertize "Resuming session" 'font-lock-face 'font-lock-doc-markup-face))
                                                :expanded t
                                                :body (or (map-elt acp-session 'title) ""))

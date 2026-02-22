@@ -188,44 +188,43 @@
 
 (ert-deftest agent-shell--format-plan-test ()
   "Test `agent-shell--format-plan' function."
-  (let ((agent-shell-status-labels nil))
-    (dolist (test-case `(;; Graphical display mode
-                         ( :graphic t
-                           :homogeneous-expected
-                           ,(concat " pending  Update state initialization\n"
-                                    " pending  Update session initialization")
-                           :mixed-expected
-                           ,(concat " pending      First task\n"
-                                    " in progress  Second task\n"
-                                    " completed    Third task"))
-                         ;; Terminal display mode
-                         ( :graphic nil
-                           :homogeneous-expected
-                           ,(concat "[pending] Update state initialization\n"
-                                    "[pending] Update session initialization")
-                           :mixed-expected
-                           ,(concat "[pending]     First task\n"
-                                    "[in progress] Second task\n"
-                                    "[completed]   Third task"))))
-      (cl-letf (((symbol-function 'display-graphic-p)
-                 (lambda (&optional _display) (plist-get test-case :graphic))))
-        ;; Test homogeneous statuses
-        (should (equal (substring-no-properties
-                        (agent-shell--format-plan [((content . "Update state initialization")
-                                                    (status . "pending"))
-                                                   ((content . "Update session initialization")
-                                                    (status . "pending"))]))
-                       (plist-get test-case :homogeneous-expected)))
+  (dolist (test-case `(;; Graphical display mode
+                       ( :graphic t
+                         :homogeneous-expected
+                         ,(concat " wait  Update state initialization\n"
+                                  " wait  Update session initialization")
+                         :mixed-expected
+                         ,(concat " wait  First task\n"
+                                  " busy  Second task\n"
+                                  " done  Third task"))
+                       ;; Terminal display mode
+                       ( :graphic nil
+                         :homogeneous-expected
+                         ,(concat "[wait] Update state initialization\n"
+                                  "[wait] Update session initialization")
+                         :mixed-expected
+                         ,(concat "[wait] First task\n"
+                                  "[busy] Second task\n"
+                                  "[done] Third task"))))
+    (cl-letf (((symbol-function 'display-graphic-p)
+               (lambda (&optional _display) (plist-get test-case :graphic))))
+      ;; Test homogeneous statuses
+      (should (equal (substring-no-properties
+                      (agent-shell--format-plan [((content . "Update state initialization")
+                                                  (status . "pending"))
+                                                 ((content . "Update session initialization")
+                                                  (status . "pending"))]))
+                     (plist-get test-case :homogeneous-expected)))
 
-        ;; Test mixed statuses
-        (should (equal (substring-no-properties
-                        (agent-shell--format-plan [((content . "First task")
-                                                    (status . "pending"))
-                                                   ((content . "Second task")
-                                                    (status . "in_progress"))
-                                                   ((content . "Third task")
-                                                    (status . "completed"))]))
-                       (plist-get test-case :mixed-expected))))))
+      ;; Test mixed statuses
+      (should (equal (substring-no-properties
+                      (agent-shell--format-plan [((content . "First task")
+                                                  (status . "pending"))
+                                                 ((content . "Second task")
+                                                  (status . "in_progress"))
+                                                 ((content . "Third task")
+                                                  (status . "completed"))]))
+                     (plist-get test-case :mixed-expected)))))
 
   ;; Test empty entries
   (should (equal (agent-shell--format-plan []) "")))
