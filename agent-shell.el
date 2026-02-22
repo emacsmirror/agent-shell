@@ -4536,54 +4536,36 @@ ACTIONS as per `agent-shell--make-permission-action'."
        :new (map-elt diff :new)
        :file (map-elt diff :file)
        :title (file-name-nondirectory (map-elt diff :file))
-       :bindings (list (list :key "n"
-                             :description "next hunk"
-                             :command 'diff-hunk-next)
-                       (list :key "p"
-                             :description "previous hunk"
-                             :command 'diff-hunk-prev)
-                       (list :key "y"
-                             :description "accept all"
-                             :kind 'accept-all
-                             :command (lambda ()
-                                        (interactive)
-                                        (let ((action (agent-shell--resolve-permission-choice-to-action
-                                                       :choice 'accept
-                                                       :actions actions))
-                                              (agent-shell-on-exit nil))
-                                          ;; Disable on-exit since killing
-                                          ;; the buffer should not trigger
-                                          ;; asking user if they want to
-                                          ;; keep or reject changes.
-                                          (kill-current-buffer)
-                                          (with-current-buffer shell-buffer
-                                            (agent-shell--send-permission-response
-                                             :client client
-                                             :request-id request-id
-                                             :option-id (map-elt action :option-id)
-                                             :state state
-                                             :tool-call-id tool-call-id
-                                             :message-text (map-elt action :option))))))
-                       (list :key (key-description (where-is-internal 'agent-shell-interrupt agent-shell-mode-map t))
-                             :description nil ;; hide from header-line-format
-                             :kind 'reject-all
-                             :command (lambda ()
-                                        (interactive)
-                                        (when (y-or-n-p "Interrupt?")
-                                          (let ((agent-shell-on-exit nil))
-                                            ;; Disable on-exit since killing
-                                            ;; the buffer should not trigger
-                                            ;; asking user if they want to
-                                            ;; keep or reject changes.
-                                            (kill-current-buffer))
-                                          (with-current-buffer shell-buffer
-                                            (agent-shell-interrupt t)))))
-                       (list :key "f"
-                             :description (concat "open " (file-name-nondirectory (map-elt diff :file)))
-                             :command (lambda ()
-                                        (interactive)
-                                        (find-file (map-elt diff :file))))
-                       (list :key "q" :description "exit" :command 'kill-current-buffer))
+       :on-accept (lambda ()
+                    (interactive)
+                    (let ((action (agent-shell--resolve-permission-choice-to-action
+                                   :choice 'accept
+                                   :actions actions))
+                          (agent-shell-on-exit nil))
+                      ;; Disable on-exit since killing
+                      ;; the buffer should not trigger
+                      ;; asking user if they want to
+                      ;; keep or reject changes.
+                      (kill-current-buffer)
+                      (with-current-buffer shell-buffer
+                        (agent-shell--send-permission-response
+                         :client client
+                         :request-id request-id
+                         :option-id (map-elt action :option-id)
+                         :state state
+                         :tool-call-id tool-call-id
+                         :message-text (map-elt action :option)))))
+       :on-reject (lambda ()
+                    (interactive)
+                    (when (y-or-n-p "Interrupt?")
+                      (let ((agent-shell-on-exit nil))
+                        ;; Disable on-exit since killing
+                        ;; the buffer should not trigger
+                        ;; asking user if they want to
+                        ;; keep or reject changes.
+                        (kill-current-buffer))
+                      (with-current-buffer shell-buffer
+                        (agent-shell-interrupt t))))
        :on-exit (lambda ()
                   (if-let ((choice (condition-case nil
                                        (if (y-or-n-p "Accept changes?")
