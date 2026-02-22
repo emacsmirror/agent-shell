@@ -520,6 +520,20 @@ With EXISTING-ONLY, only return existing buffers without creating."
     ;; Setting point isn't enough at times. Force scrolling.
     (set-window-start (selected-window) (point-min))))
 
+(defun agent-shell-viewport-reply-yes ()
+  "Reply with \"yes\" and send immediately."
+  (interactive)
+  (agent-shell-viewport-reply)
+  (insert "yes")
+  (agent-shell-viewport-compose-send))
+
+(defun agent-shell-viewport-reply-more ()
+  "Reply with \"more\" and send immediately."
+  (interactive)
+  (agent-shell-viewport-reply)
+  (insert "more")
+  (agent-shell-viewport-compose-send))
+
 (defun agent-shell-viewport-previous-page ()
   "Show previous interaction (request / response)."
   (interactive)
@@ -808,10 +822,12 @@ For example, offer to kill associated shell session."
     (define-key map (kbd "f") #'agent-shell-viewport-next-page)
     (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
     (define-key map (kbd "r") #'agent-shell-viewport-reply)
+    (define-key map (kbd "y") #'agent-shell-viewport-reply-yes)
     (define-key map (kbd "q") #'bury-buffer)
     (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
     (define-key map (kbd "v") #'agent-shell-viewport-set-session-model)
-    (define-key map (kbd "m") #'agent-shell-viewport-set-session-mode)
+    (define-key map (kbd "m") #'agent-shell-viewport-reply-more)
+    (define-key map (kbd "s") #'agent-shell-viewport-set-session-mode)
     (define-key map (kbd "o") #'agent-shell-other-buffer)
     (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
     map)
