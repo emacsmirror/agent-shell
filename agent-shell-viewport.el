@@ -553,7 +553,6 @@ buffer from the snapshot and switch to edit mode."
   (when (agent-shell-viewport--busy-p)
     (user-error "Busy... please wait"))
   (let ((shell-buffer (agent-shell-viewport--shell-buffer))
-        (viewport-buffer (current-buffer))
         (snapshot agent-shell-viewport--compose-snapshot)
         (pos (agent-shell-viewport--position :force-refresh t)))
     ;; Check if at last position going forward with a snapshot to restore
