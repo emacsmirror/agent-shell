@@ -62,10 +62,19 @@
 (declare-function agent-shell-ui-forward-block "agent-shell")
 (declare-function agent-shell-ui-mode "agent-shell")
 (declare-function agent-shell-completion-mode "agent-shell-completion")
+(declare-function agent-shell-yank-dwim "agent-shell")
 
 (defvar agent-shell-header-style)
 (defvar agent-shell-prefer-viewport-interaction)
 (defvar agent-shell-preferred-agent-config)
+(defvar agent-shell-session-strategy)
+(defvar agent-shell--state)
+(defvar agent-shell-file-completion-enabled)
+(defvar agent-shell-viewport--compose-snapshot)
+(defvar agent-shell-viewport--suffix)
+(defvar agent-shell-viewport--position-cache)
+(defvar agent-shell-viewport-edit-mode-map)
+(defvar agent-shell-viewport-view-mode-map)
 
 (cl-defun agent-shell-viewport--show-buffer (&key append override submit no-focus shell-buffer)
   "Show a viewport compose buffer for the agent shell.
