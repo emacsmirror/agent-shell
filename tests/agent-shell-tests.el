@@ -1170,25 +1170,30 @@ code block content
 
 (ert-deftest agent-shell--format-session-date-test ()
   "Test `agent-shell--format-session-date' humanizes timestamps."
-  ;; Today
-  (let* ((now (current-time))
-         (today-iso (format-time-string "%Y-%m-%dT10:30:00Z" now)))
-    (should (equal (agent-shell--format-session-date today-iso)
-                   "Today, 10:30")))
-  ;; Yesterday
-  (let* ((yesterday (time-subtract (current-time) (* 24 60 60)))
-         (yesterday-iso (format-time-string "%Y-%m-%dT15:45:00Z" yesterday)))
-    (should (equal (agent-shell--format-session-date yesterday-iso)
-                   "Yesterday, 15:45")))
-  ;; Same year, older
-  (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]+:[0-9]+"
-                           (agent-shell--format-session-date "2026-01-05T09:00:00Z")))
-  ;; Different year
-  (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]\\{4\\}"
-                           (agent-shell--format-session-date "2025-06-15T12:00:00Z")))
-  ;; Invalid input falls back gracefully
-  (should (equal (agent-shell--format-session-date "not-a-date")
-                 "not-a-date")))
+  ;; Pin timezone to UTC so assertions are deterministic.
+  (let ((orig-tz (getenv "TZ")))
+    (unwind-protect
+        (progn
+          (set-time-zone-rule "UTC")
+          ;; Today
+          (let* ((now (current-time))
+                 (today-iso (format-time-string "%Y-%m-%dT10:30:00Z" now)))
+            (should (equal (agent-shell--format-session-date today-iso)
+                           "Today, 10:30")))
+          ;; Yesterday
+          (let* ((yesterday (time-subtract (current-time) (* 24 60 60)))
+                 (yesterday-iso (format-time-string "%Y-%m-%dT15:45:00Z" yesterday)))
+            (should (equal (agent-shell--format-session-date yesterday-iso)
+                           "Yesterday, 15:45")))
+          ;; Same year, older
+          (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]+:[0-9]+"
+                                   (agent-shell--format-session-date "2026-01-05T09:00:00Z")))
+          ;; Different year
+          (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]\\{4\\}"
+                                   (agent-shell--format-session-date "2025-06-15T12:00:00Z")))
+          ;; Invalid input falls back gracefully
+          (should (stringp (agent-shell--format-session-date "not-a-date"))))
+      (set-time-zone-rule orig-tz))))
 
 (ert-deftest agent-shell--prompt-select-session-test ()
   "Test `agent-shell--prompt-select-session' choices."
