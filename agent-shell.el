@@ -64,6 +64,7 @@
 (require 'agent-shell-pi)
 (require 'agent-shell-project)
 (require 'agent-shell-qwen)
+(require 'agent-shell-styles)
 (require 'agent-shell-usage)
 (require 'agent-shell-worktree)
 (require 'agent-shell-ui)
@@ -2021,34 +2022,6 @@ for details."
           (error "No image found in clipboard")))
        (t
         file-path))))))
-
-(defun agent-shell--default-status-kind-label (status kind)
-  "Default rendering for STATUS and KIND labels.
-STATUS is a string like \"completed\" or nil.
-KIND is a string like \"read\" or nil.
-Returns a propertized string or nil."
-  (let* ((status-config (pcase status
-                          ("pending" '(:label "wait" :face font-lock-comment-face))
-                          ("in_progress" '(:label "busy" :face warning))
-                          ("completed" '(:label "done" :face success))
-                          ("failed" '(:label "error" :face error))
-                          (_ '(:label "unknown" :face warning))))
-         (label-format (if (display-graphic-p) " %s " "[%s]"))
-         (status-text (when status
-                        (let ((label (plist-get status-config :label))
-                              (face (plist-get status-config :face)))
-                          (agent-shell--add-text-properties
-                           (propertize (format label-format label)
-                                       'font-lock-face 'default)
-                           'font-lock-face (list face '(:inverse-video t))))))
-         (kind-text (when kind
-                      (let ((box-color (face-foreground
-                                        (plist-get status-config :face) nil t)))
-                        (agent-shell--add-text-properties
-                         (propertize (format label-format kind)
-                                     'font-lock-face 'default)
-                         'font-lock-face `((:box (:color ,box-color))))))))
-    (concat status-text kind-text)))
 
 (defcustom agent-shell-status-kind-label-function
   #'agent-shell--default-status-kind-label
