@@ -492,10 +492,13 @@
                              (cons :buffer (current-buffer))
                              (cons :last-entry-type nil))))
 
-    ;; Mock acp-send-request to capture what gets sent
+    ;; Mock acp-send-request to capture what gets sent;
+    ;; stub viewport--buffer to avoid interactive shell-buffer prompt in batch.
     (cl-letf (((symbol-function 'acp-send-request)
                (lambda (&rest args)
-                 (setq sent-request args))))
+                 (setq sent-request args)))
+              ((symbol-function 'agent-shell-viewport--buffer)
+               (lambda (&rest _) nil)))
 
       ;; Send a simple command
       (agent-shell--send-command
@@ -522,13 +525,16 @@
                              (cons :buffer (current-buffer))
                              (cons :last-entry-type nil))))
 
-    ;; Mock build-content-blocks to throw an error
+    ;; Mock build-content-blocks to throw an error;
+    ;; stub viewport--buffer to avoid interactive shell-buffer prompt in batch.
     (cl-letf (((symbol-function 'agent-shell--build-content-blocks)
                (lambda (_prompt)
                  (error "Simulated error in build-content-blocks")))
               ((symbol-function 'acp-send-request)
                (lambda (&rest args)
-                 (setq sent-request args))))
+                 (setq sent-request args)))
+              ((symbol-function 'agent-shell-viewport--buffer)
+               (lambda (&rest _) nil)))
 
       ;; First, verify that build-content-blocks actually throws an error
       (should-error (agent-shell--build-content-blocks "Test prompt")
