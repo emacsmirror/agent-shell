@@ -74,6 +74,16 @@
 (require 'svg nil :noerror)
 (require 'transient)
 
+;; Optional flycheck integration (used in agent-shell--get-flycheck-error-context)
+(declare-function flycheck-overlay-errors-at "flycheck" (pos))
+(declare-function flycheck-error-pos "flycheck" (err))
+(declare-function flycheck-error-end-line "flycheck" (err))
+(declare-function flycheck-error-end-column "flycheck" (err))
+(declare-function flycheck-error-level "flycheck" (err))
+(declare-function flycheck-error-message "flycheck" (err))
+(declare-function flycheck-error-line "flycheck" (err))
+(declare-function flycheck-error-column "flycheck" (err))
+
 ;; Declare as special so byte-compilation doesn't turn `let' bindings into
 ;; lexical bindings (which would not affect `auto-insert' behavior).
 (defvar auto-insert)

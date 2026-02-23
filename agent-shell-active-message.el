@@ -24,6 +24,8 @@
 
 ;;; Code:
 
+(require 'map)
+
 (eval-when-compile
   (require 'cl-lib))
 

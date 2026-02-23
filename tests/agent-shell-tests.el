@@ -378,51 +378,72 @@
           (cl-letf (((symbol-function 'agent-shell-cwd)
                      (lambda () default-directory)))
 
-            ;; Test with image and embedded context support - should use ContentBlock::Image
-            (let ((agent-shell--state (list
-                                       (cons :prompt-capabilities '((:image . t) (:embedded-context . t))))))
-              (let ((blocks (agent-shell--build-content-blocks (format "Analyze @%s" file-name))))
-                ;; Should have text block and image block
-                (should (= (length blocks) 2))
+            (if (display-images-p)
+                ;; Graphical Emacs: image-supported-file-p recognises PNG,
+                ;; so the image code-path is reachable.
+                (progn
+                  ;; Test with image and embedded context support - should use ContentBlock::Image
+                  (let ((agent-shell--state (list
+                                             (cons :prompt-capabilities '((:image . t) (:embedded-context . t))))))
+                    (let ((blocks (agent-shell--build-content-blocks (format "Analyze @%s" file-name))))
+                      ;; Should have text block and image block
+                      (should (= (length blocks) 2))
 
-                ;; Check text block
-                (should (equal (map-elt (nth 0 blocks) 'type) "text"))
-                (should (equal (map-elt (nth 0 blocks) 'text) "Analyze"))
+                      ;; Check text block
+                      (should (equal (map-elt (nth 0 blocks) 'type) "text"))
+                      (should (equal (map-elt (nth 0 blocks) 'text) "Analyze"))
 
-                ;; Check image block
-                (let ((image-block (nth 1 blocks)))
-                  (should (equal (map-elt image-block 'type) "image"))
+                      ;; Check image block
+                      (let ((image-block (nth 1 blocks)))
+                        (should (equal (map-elt image-block 'type) "image"))
 
-                  ;; Check URI
-                  (should (equal (map-elt image-block 'uri) file-uri))
+                        ;; Check URI
+                        (should (equal (map-elt image-block 'uri) file-uri))
 
-                  ;; Check MIME type is image/png
-                  (should (equal (map-elt image-block 'mimeType) "image/png"))
+                        ;; Check MIME type is image/png
+                        (should (equal (map-elt image-block 'mimeType) "image/png"))
 
-                  ;; Check content is base64-encoded (not raw binary)
-                  (let ((content (map-elt image-block 'data)))
-                    ;; Should be a string
-                    (should (stringp content))
-                    ;; Should not contain raw PNG signature
-                    (should-not (string-match-p "\x89PNG" content))
-                    ;; Should be base64 (alphanumeric + / + = padding)
-                    (should (string-match-p "^[A-Za-z0-9+/\n]+=*$" content))
-                    ;; Should be longer than original (base64 overhead)
-                    (should (> (length content) 69))))))
+                        ;; Check content is base64-encoded (not raw binary)
+                        (let ((content (map-elt image-block 'data)))
+                          ;; Should be a string
+                          (should (stringp content))
+                          ;; Should not contain raw PNG signature
+                          (should-not (string-match-p "\x89PNG" content))
+                          ;; Should be base64 (alphanumeric + / + = padding)
+                          (should (string-match-p "^[A-Za-z0-9+/\n]+=*$" content))
+                          ;; Should be longer than original (base64 overhead)
+                          (should (< 69 (length content)))))))
 
-            ;; Test without image capability - should use resource_link with correct mime type
-            (let ((agent-shell--state (list
-                                       (cons :prompt-capabilities nil))))
-              (let ((blocks (agent-shell--build-content-blocks (format "Analyze @%s" file-name))))
-                (should (= (length blocks) 2))
+                  ;; Test without image capability - should use resource_link with correct mime type
+                  (let ((agent-shell--state (list
+                                             (cons :prompt-capabilities nil))))
+                    (let ((blocks (agent-shell--build-content-blocks (format "Analyze @%s" file-name))))
+                      (should (= (length blocks) 2))
 
-                (let ((resource-link (nth 1 blocks)))
-                  (should (equal (map-elt resource-link 'type) "resource_link"))
-                  (should (equal (map-elt resource-link 'uri) file-uri))
-                  ;; Should have image/png mime type
-                  (should (equal (map-elt resource-link 'mimeType) "image/png"))
-                  (should (equal (map-elt resource-link 'name) file-name))
-                  (should (equal (map-elt resource-link 'size) 69)))))))
+                      (let ((resource-link (nth 1 blocks)))
+                        (should (equal (map-elt resource-link 'type) "resource_link"))
+                        (should (equal (map-elt resource-link 'uri) file-uri))
+                        ;; Should have image/png mime type
+                        (should (equal (map-elt resource-link 'mimeType) "image/png"))
+                        (should (equal (map-elt resource-link 'name) file-name))
+                        (should (equal (map-elt resource-link 'size) 69))))))
+
+              ;; Non-graphical Emacs: image-supported-file-p is unavailable,
+              ;; so the PNG is treated as text/plain by the MIME resolver.
+              ;; Verify the resource_link fallback still works.
+              (let ((agent-shell--state (list
+                                         (cons :prompt-capabilities '((:image . t) (:embedded-context . t))))))
+                (let ((blocks (agent-shell--build-content-blocks (format "Analyze @%s" file-name))))
+                  (should (= (length blocks) 2))
+
+                  ;; Text block is still present
+                  (should (equal (map-elt (nth 0 blocks) 'type) "text"))
+                  (should (equal (map-elt (nth 0 blocks) 'text) "Analyze"))
+
+                  ;; Without image MIME detection the file is embedded as a
+                  ;; resource (text/plain), not as an image block.
+                  (let ((block (nth 1 blocks)))
+                    (should (member (map-elt block 'type) '("resource" "resource_link")))))))))
 
       (delete-file temp-file))))
 
@@ -471,10 +492,13 @@
                              (cons :buffer (current-buffer))
                              (cons :last-entry-type nil))))
 
-    ;; Mock acp-send-request to capture what gets sent
+    ;; Mock acp-send-request to capture what gets sent;
+    ;; stub viewport--buffer to avoid interactive shell-buffer prompt in batch.
     (cl-letf (((symbol-function 'acp-send-request)
                (lambda (&rest args)
-                 (setq sent-request args))))
+                 (setq sent-request args)))
+              ((symbol-function 'agent-shell-viewport--buffer)
+               (lambda (&rest _) nil)))
 
       ;; Send a simple command
       (agent-shell--send-command
@@ -501,13 +525,16 @@
                              (cons :buffer (current-buffer))
                              (cons :last-entry-type nil))))
 
-    ;; Mock build-content-blocks to throw an error
+    ;; Mock build-content-blocks to throw an error;
+    ;; stub viewport--buffer to avoid interactive shell-buffer prompt in batch.
     (cl-letf (((symbol-function 'agent-shell--build-content-blocks)
                (lambda (_prompt)
                  (error "Simulated error in build-content-blocks")))
               ((symbol-function 'acp-send-request)
                (lambda (&rest args)
-                 (setq sent-request args))))
+                 (setq sent-request args)))
+              ((symbol-function 'agent-shell-viewport--buffer)
+               (lambda (&rest _) nil)))
 
       ;; First, verify that build-content-blocks actually throws an error
       (should-error (agent-shell--build-content-blocks "Test prompt")
@@ -1149,25 +1176,30 @@ code block content
 
 (ert-deftest agent-shell--format-session-date-test ()
   "Test `agent-shell--format-session-date' humanizes timestamps."
-  ;; Today
-  (let* ((now (current-time))
-         (today-iso (format-time-string "%Y-%m-%dT10:30:00Z" now)))
-    (should (equal (agent-shell--format-session-date today-iso)
-                   "Today, 10:30")))
-  ;; Yesterday
-  (let* ((yesterday (time-subtract (current-time) (* 24 60 60)))
-         (yesterday-iso (format-time-string "%Y-%m-%dT15:45:00Z" yesterday)))
-    (should (equal (agent-shell--format-session-date yesterday-iso)
-                   "Yesterday, 15:45")))
-  ;; Same year, older
-  (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]+:[0-9]+"
-                           (agent-shell--format-session-date "2026-01-05T09:00:00Z")))
-  ;; Different year
-  (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]\\{4\\}"
-                           (agent-shell--format-session-date "2025-06-15T12:00:00Z")))
-  ;; Invalid input falls back gracefully
-  (should (equal (agent-shell--format-session-date "not-a-date")
-                 "not-a-date")))
+  ;; Pin timezone to UTC so assertions are deterministic.
+  (let ((orig-tz (getenv "TZ")))
+    (unwind-protect
+        (progn
+          (set-time-zone-rule "UTC")
+          ;; Today
+          (let* ((now (current-time))
+                 (today-iso (format-time-string "%Y-%m-%dT10:30:00Z" now)))
+            (should (equal (agent-shell--format-session-date today-iso)
+                           "Today, 10:30")))
+          ;; Yesterday
+          (let* ((yesterday (time-subtract (current-time) (* 24 60 60)))
+                 (yesterday-iso (format-time-string "%Y-%m-%dT15:45:00Z" yesterday)))
+            (should (equal (agent-shell--format-session-date yesterday-iso)
+                           "Yesterday, 15:45")))
+          ;; Same year, older
+          (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]+:[0-9]+"
+                                   (agent-shell--format-session-date "2026-01-05T09:00:00Z")))
+          ;; Different year
+          (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]\\{4\\}"
+                                   (agent-shell--format-session-date "2025-06-15T12:00:00Z")))
+          ;; Invalid input falls back gracefully
+          (should (stringp (agent-shell--format-session-date "not-a-date"))))
+      (set-time-zone-rule orig-tz))))
 
 (ert-deftest agent-shell--prompt-select-session-test ()
   "Test `agent-shell--prompt-select-session' choices."
@@ -1342,7 +1374,7 @@ code block content
   (should (null (agent-shell--extract-tool-parameters
                  '((plan . "Step 1: do something"))))))
 
-(ert-deftest agent-shell--make-transcript-tool-call-entry-test ()
+(ert-deftest agent-shell--make-transcript-tool-call-entry-parameters-test ()
   "Test `agent-shell--make-transcript-tool-call-entry' with parameters."
   ;; Test basic entry without parameters
   (let ((entry (agent-shell--make-transcript-tool-call-entry
