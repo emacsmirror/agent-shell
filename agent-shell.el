@@ -3434,12 +3434,11 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                    (length (agent-shell--session-title s)))
                                                  acp-sessions)))
            (new-session-choice "Start a new session")
-           (choices (append
-                     (mapcar (lambda (acp-session)
-                               (cons (agent-shell--session-choice-label acp-session max-dir-width max-title-width)
-                                     acp-session))
-                             acp-sessions)
-                     (list (cons new-session-choice nil))))
+           (choices (cons (cons new-session-choice nil)
+                          (mapcar (lambda (acp-session)
+                                    (cons (agent-shell--session-choice-label acp-session max-dir-width max-title-width)
+                                          acp-session))
+                                  acp-sessions)))
            (candidates (mapcar #'car choices))
            ;; Some completion frameworks yielded appended (nil) to each line
            ;; unless this-command was bound.
