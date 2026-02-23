@@ -1198,7 +1198,8 @@ code block content
           (should (string-match-p "^[A-Z][a-z]+ [0-9]+, [0-9]\\{4\\}"
                                    (agent-shell--format-session-date "2025-06-15T12:00:00Z")))
           ;; Invalid input falls back gracefully
-          (should (stringp (agent-shell--format-session-date "not-a-date"))))
+          (should (equal (agent-shell--format-session-date "not-a-date")
+                         "not-a-date")))
       (set-time-zone-rule orig-tz))))
 
 (ert-deftest agent-shell--prompt-select-session-test ()

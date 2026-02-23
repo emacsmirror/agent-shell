@@ -70,11 +70,12 @@
 (defvar agent-shell-session-strategy)
 (defvar agent-shell--state)
 (defvar agent-shell-file-completion-enabled)
-(defvar agent-shell-viewport--compose-snapshot)
-(defvar agent-shell-viewport--suffix)
-(defvar agent-shell-viewport--position-cache)
-(defvar agent-shell-viewport-edit-mode-map)
-(defvar agent-shell-viewport-view-mode-map)
+
+(defvar-local agent-shell-viewport--compose-snapshot nil
+  "Alist with :content and :location from compose buffer before viewing history.")
+;; The viewport buffer transitions between major modes which clears
+;; buffer-local vars. Make snapshot permanent-local.
+(put 'agent-shell-viewport--compose-snapshot 'permanent-local t)
 
 (cl-defun agent-shell-viewport--show-buffer (&key append override submit no-focus shell-buffer)
   "Show a viewport compose buffer for the agent shell.
@@ -479,6 +480,9 @@ If at the first item, attempt to switch to previous interaction."
          (when prompt-start
            (goto-char prompt-start)))))))
 
+(defconst agent-shell-viewport--suffix " [viewport]"
+  "Suffix appended to shell buffer name to create viewport buffer name.")
+
 (cl-defun agent-shell-viewport--buffer (&key shell-buffer existing-only)
   "Get the viewport buffer associated with a SHELL-BUFFER.
 
@@ -642,6 +646,10 @@ buffer from the snapshot and switch to edit mode."
            (with-current-buffer viewport-buffer
              (agent-shell-viewport--update-header))))))))
 
+;; Continuously fetching position can get expensive. Cache it.
+(defvar-local agent-shell-viewport--position-cache nil
+  "Cached position value (CURRENT . TOTAL).")
+
 (cl-defun agent-shell-viewport--position (&key force-refresh)
   "Return the position in history of the shell buffer.
 
@@ -672,6 +680,40 @@ VIEWPORT-BUFFER is the viewport buffer to check."
                             :no-error t)))
     (with-current-buffer shell-buffer
       shell-maker--busy)))
+
+(defvar agent-shell-viewport-edit-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-compose-send)
+    (define-key map (kbd "C-c C-p") #'agent-shell-viewport-compose-peek-last)
+    (define-key map (kbd "C-c C-k") #'agent-shell-viewport-compose-cancel)
+    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
+    (define-key map (kbd "C-c C-m") #'agent-shell-viewport-set-session-mode)
+    (define-key map (kbd "C-c C-v") #'agent-shell-viewport-set-session-model)
+    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
+    (define-key map [remap yank] #'agent-shell-yank-dwim)
+    map)
+  "Keymap for `agent-shell-viewport-edit-mode'.")
+
+(defvar agent-shell-viewport-view-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-interrupt)
+    (define-key map (kbd "TAB") #'agent-shell-viewport-next-item)
+    (define-key map (kbd "<backtab>") #'agent-shell-viewport-previous-item)
+    (define-key map (kbd "n") #'agent-shell-viewport-next-item)
+    (define-key map (kbd "p") #'agent-shell-viewport-previous-item)
+    (define-key map (kbd "f") #'agent-shell-viewport-next-page)
+    (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
+    (define-key map (kbd "r") #'agent-shell-viewport-reply)
+    (define-key map (kbd "y") #'agent-shell-viewport-reply-yes)
+    (define-key map (kbd "q") #'bury-buffer)
+    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
+    (define-key map (kbd "v") #'agent-shell-viewport-set-session-model)
+    (define-key map (kbd "m") #'agent-shell-viewport-reply-more)
+    (define-key map (kbd "s") #'agent-shell-viewport-set-session-mode)
+    (define-key map (kbd "o") #'agent-shell-other-buffer)
+    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
+    map)
+  "Keymap for `agent-shell-viewport-view-mode'.")
 
 (defun agent-shell-viewport--update-header ()
   "Update header and mode line based on `agent-shell-header-style'.
@@ -741,9 +783,6 @@ Automatically determines qualifier and bindings based on current major mode."
 
 (defvar-local agent-shell-viewport--clean-up t)
 
-(defconst agent-shell-viewport--suffix " [viewport]"
-  "Suffix appended to shell buffer name to create viewport buffer name.")
-
 (cl-defun agent-shell-viewport--shell-buffer (&optional viewport-buffer)
   "Get the shell buffer associated with VIEWPORT-BUFFER.
 
@@ -755,16 +794,6 @@ Returns nil if VIEWPORT-BUFFER is not a viewport buffer or shell doesn't exist."
                                      (- (length viewport-name)
                                         (length agent-shell-viewport--suffix)))))
     (get-buffer shell-name)))
-
-;; Continuously fetching position can get expensive. Cache it.
-(defvar-local agent-shell-viewport--position-cache nil
-  "Cached position value (CURRENT . TOTAL).")
-
-(defvar-local agent-shell-viewport--compose-snapshot nil
-  "Alist with :content and :location from compose buffer before viewing history.")
-;; The viewport buffer transitions between major modes which clears
-;; buffer-local vars. Make snapshot permanent-local.
-(put 'agent-shell-viewport--compose-snapshot 'permanent-local t)
 
 (defun agent-shell-viewport--clean-up ()
   "Clean up resources.
@@ -794,19 +823,6 @@ For example, offer to kill associated shell session."
                   (kill-buffer shell-buffer))
                 shell-buffers)))))
 
-(defvar agent-shell-viewport-edit-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-compose-send)
-    (define-key map (kbd "C-c C-p") #'agent-shell-viewport-compose-peek-last)
-    (define-key map (kbd "C-c C-k") #'agent-shell-viewport-compose-cancel)
-    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
-    (define-key map (kbd "C-c C-m") #'agent-shell-viewport-set-session-mode)
-    (define-key map (kbd "C-c C-v") #'agent-shell-viewport-set-session-model)
-    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
-    (define-key map [remap yank] #'agent-shell-yank-dwim)
-    map)
-  "Keymap for `agent-shell-viewport-edit-mode'.")
-
 (define-derived-mode agent-shell-viewport-edit-mode text-mode "Agent Shell Viewport (Edit)"
   "Major mode for composing agent shell prompts.
 
@@ -819,27 +835,6 @@ For example, offer to kill associated shell session."
   (let ((inhibit-read-only t))
     (erase-buffer))
   (add-hook 'kill-buffer-hook #'agent-shell-viewport--clean-up nil t))
-
-(defvar agent-shell-viewport-view-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'agent-shell-viewport-interrupt)
-    (define-key map (kbd "TAB") #'agent-shell-viewport-next-item)
-    (define-key map (kbd "<backtab>") #'agent-shell-viewport-previous-item)
-    (define-key map (kbd "n") #'agent-shell-viewport-next-item)
-    (define-key map (kbd "p") #'agent-shell-viewport-previous-item)
-    (define-key map (kbd "f") #'agent-shell-viewport-next-page)
-    (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
-    (define-key map (kbd "r") #'agent-shell-viewport-reply)
-    (define-key map (kbd "y") #'agent-shell-viewport-reply-yes)
-    (define-key map (kbd "q") #'bury-buffer)
-    (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
-    (define-key map (kbd "v") #'agent-shell-viewport-set-session-model)
-    (define-key map (kbd "m") #'agent-shell-viewport-reply-more)
-    (define-key map (kbd "s") #'agent-shell-viewport-set-session-mode)
-    (define-key map (kbd "o") #'agent-shell-other-buffer)
-    (define-key map (kbd "C-c C-o") #'agent-shell-other-buffer)
-    map)
-  "Keymap for `agent-shell-viewport-view-mode'.")
 
 (define-derived-mode agent-shell-viewport-view-mode text-mode "Agent Shell Viewport (View)"
   "Major mode for viewing agent shell prompts (read-only).
