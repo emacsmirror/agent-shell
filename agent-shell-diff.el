@@ -24,9 +24,6 @@
 ;;
 ;; ✨ Please support this work https://github.com/sponsors/xenodium ✨
 
-;;; Commentary:
-;;
-
 ;;; Code:
 
 (eval-when-compile
@@ -41,6 +38,9 @@ This variable is automatically set by :on-exit from `agent-shell-diff'
 and can be temporarily let-bound to nil to prevent the
 on-exit callback from running when the buffer is killed.")
 
+(defvar-local agent-shell-diff--file nil
+  "Buffer-local file path associated with the diff.")
+
 (defvar-local agent-shell-diff--accept-all-command nil
   "Buffer-local command to accept all changes in the diff.")
 
@@ -49,13 +49,16 @@ on-exit callback from running when the buffer is killed.")
 
 (defvar agent-shell-diff-mode-map
   (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "n") #'diff-hunk-next)
+    (define-key map (kbd "p") #'diff-hunk-prev)
     (define-key map (kbd "y") #'agent-shell-diff-accept-all)
-    (define-key map (kbd "n") #'agent-shell-diff-reject-all)
+    (define-key map (kbd "f") #'agent-shell-diff-open-file)
+    (define-key map (kbd "q") #'kill-current-buffer)
     map)
   "Keymap for `agent-shell-diff-mode'.")
 
 (define-derived-mode agent-shell-diff-mode diff-mode "Agent-Shell-Diff"
-  "Major mode for agent-shell diff buffers.
+  "Major mode for `agent-shell' diff buffers.
 Derives from `diff-mode'.  Provides `agent-shell-diff-accept-all'
 and `agent-shell-diff-reject-all' commands that can be rebound
 via `agent-shell-diff-mode-map'."
@@ -78,11 +81,11 @@ via `agent-shell-diff-mode-map'."
       (funcall agent-shell-diff--reject-all-command)
     (user-error "No reject command available in this buffer")))
 
-(cl-defun agent-shell-diff (&key old new on-exit title bindings file)
+(cl-defun agent-shell-diff (&key old new on-exit on-accept on-reject title file)
   "Display a diff between OLD and NEW strings in a buffer.
 
 Creates a new buffer showing the differences between OLD and NEW
-using `diff-mode'.  The buffer is read-only.
+using `agent-shell-diff-mode'.  The buffer is read-only.
 
 When the buffer is killed, calls ON-EXIT with no arguments.
 
@@ -90,25 +93,23 @@ Arguments:
   :OLD       - Original string content
   :NEW       - Modified string content
   :ON-EXIT   - Function called with no arguments when buffer is killed
+  :ON-ACCEPT - Command to accept all changes
+  :ON-REJECT - Command to reject all changes
   :TITLE     - Optional title to display in header line
-  :BINDINGS  - List of alists defining key bindings, each with:
-               :key         - Key string (e.g., \"n\")
-               :description - Description for header line (e.g., \"next hunk\")
-               :command     - Command function (e.g., `diff-hunk-next')
-  :OLD-LABEL - Label for old content (default: \"before\")
-  :NEW-LABEL - Label for new content (default: \"after\")
   :FILE      - File path"
   (let* ((diff-buffer (generate-new-buffer "*agent-shell-diff*"))
          (calling-window (selected-window))
-         (calling-buffer (current-buffer)))
+         (calling-buffer (current-buffer))
+         (interrupt-key (where-is-internal 'agent-shell-interrupt
+                                           (current-local-map) t)))
     (unwind-protect
         (progn
           (with-current-buffer diff-buffer
             (let ((inhibit-read-only t)
                   (diff-mode-read-only nil))
               (erase-buffer)
-              (agent-shell-diff-mode)
               (agent-shell-diff--insert-diff old new file diff-buffer)
+              (agent-shell-diff-mode) ;; Must happen after inserting diff
               ;; Add overlays to hide scary text.
               (save-excursion
                 (goto-char (point-min))
@@ -141,27 +142,11 @@ Arguments:
                     (overlay-put overlay 'display
                                  (propertize "│ changes │\n╰─────────╯\n\n" 'face face))
                     (overlay-put overlay 'evaporate t)))))
-            (when bindings
-              (setq header-line-format
-                    (concat
-                     "  "
-                     (when title
-                       (concat (propertize title 'face 'mode-line-emphasis) " "))
-                     (mapconcat
-                      #'identity
-                      (seq-filter
-                       #'identity
-                       (mapcar
-                        (lambda (binding)
-                          (when (map-elt binding :description)
-                            (concat
-                             (propertize (map-elt binding :key) 'face 'help-key-binding)
-                             " "
-                             (map-elt binding :description))))
-                        bindings))
-                      " "))))
             (goto-char (point-min))
             (ignore-errors (diff-hunk-next))
+            (setq agent-shell-diff--file file
+                  agent-shell-diff--accept-all-command on-accept
+                  agent-shell-diff--reject-all-command on-reject)
             (when on-exit
               (setq agent-shell-on-exit on-exit)
               (add-hook 'kill-buffer-hook
@@ -182,21 +167,31 @@ Arguments:
                                     (select-window calling-window))))))
                         nil t))
             (let ((map (copy-keymap agent-shell-diff-mode-map)))
-              (dolist (binding bindings)
-                (cond
-                 ((equal (map-elt binding :kind) 'accept-all)
-                  (setq agent-shell-diff--accept-all-command (map-elt binding :command))
-                  (unless (where-is-internal #'agent-shell-diff-accept-all map)
-                    (define-key map (kbd (map-elt binding :key)) (map-elt binding :command))))
-                 ((equal (map-elt binding :kind) 'reject-all)
-                  (setq agent-shell-diff--reject-all-command (map-elt binding :command))
-                  (unless (where-is-internal #'agent-shell-diff-reject-all map)
-                    (define-key map (kbd (map-elt binding :key)) (map-elt binding :command))))
-                 (t
-                  (define-key map (kbd (map-elt binding :key)) (map-elt binding :command)))))
-              (use-local-map map))))
+              (when (and interrupt-key
+                         (not (lookup-key map interrupt-key)))
+                (define-key map interrupt-key #'agent-shell-diff-reject-all))
+              (use-local-map map))
+            (setq header-line-format
+                  (substitute-command-keys
+                   (concat
+                    "  "
+                    (when title
+                      (concat (propertize title 'face 'mode-line-emphasis) " "))
+                    "\\[diff-hunk-next] next hunk  "
+                    "\\[diff-hunk-prev] previous hunk  "
+                    "\\[agent-shell-diff-accept-all] accept  "
+                    "\\[agent-shell-diff-reject-all] reject  "
+                    "\\[agent-shell-diff-open-file] open  "
+                    "\\[kill-current-buffer] quit")))))
       (pop-to-buffer diff-buffer '((display-buffer-use-some-window
                                     display-buffer-same-window))))))
+
+(defun agent-shell-diff-open-file ()
+  "Open the file associated with the current diff buffer."
+  (interactive)
+  (if agent-shell-diff--file
+      (find-file agent-shell-diff--file)
+    (user-error "No file associated with this diff buffer")))
 
 (defun agent-shell-diff--insert-diff (old new file buf)
   "Insert diff from FILE between OLD and NEW strings in buffer BUF."
