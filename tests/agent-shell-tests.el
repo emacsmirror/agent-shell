@@ -1342,7 +1342,7 @@ code block content
   (should (null (agent-shell--extract-tool-parameters
                  '((plan . "Step 1: do something"))))))
 
-(ert-deftest agent-shell--make-transcript-tool-call-entry-test ()
+(ert-deftest agent-shell--make-transcript-tool-call-entry-parameters-test ()
   "Test `agent-shell--make-transcript-tool-call-entry' with parameters."
   ;; Test basic entry without parameters
   (let ((entry (agent-shell--make-transcript-tool-call-entry
