@@ -3434,11 +3434,12 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                    (length (agent-shell--session-title s)))
                                                  acp-sessions)))
            (new-session-choice "Start a new session")
-           (choices (cons (cons new-session-choice nil)
-                          (mapcar (lambda (acp-session)
-                                    (cons (agent-shell--session-choice-label acp-session max-dir-width max-title-width)
-                                          acp-session))
-                                  acp-sessions)))
+           (choices (append
+                     (mapcar (lambda (acp-session)
+                               (cons (agent-shell--session-choice-label acp-session max-dir-width max-title-width)
+                                     acp-session))
+                             acp-sessions)
+                     (list (cons new-session-choice nil))))
            (candidates (mapcar #'car choices))
            ;; Some completion frameworks yielded appended (nil) to each line
            ;; unless this-command was bound.
@@ -3449,8 +3450,14 @@ Falls back to latest session in batch mode (e.g. tests)."
            ;; Let's optimize the rocket engine      Feb 12, 21:02 (nil)
            (this-command 'agent-shell))
       (agent-shell--emit-event :event 'session-prompt)
-      (let ((selection (completing-read "Resume session: "
-                                        candidates
+      (let ((selection (completing-read "Resume session (default: start new): "
+                                        (lambda (string pred action)
+                                          (if (eq action 'metadata)
+                                              '(metadata
+                                                (display-sort-function . identity)
+                                                (eager-display . t)
+                                                (eager-update . t))
+                                            (complete-with-action action candidates string pred)))
                                         nil t nil nil
                                         new-session-choice)))
         (map-elt choices selection))))))
