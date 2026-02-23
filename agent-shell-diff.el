@@ -109,6 +109,7 @@ Arguments:
                   (diff-mode-read-only nil))
               (erase-buffer)
               (agent-shell-diff--insert-diff old new file diff-buffer)
+              (agent-shell-diff-mode) ;; Must happen after inserting diff
               ;; Add overlays to hide scary text.
               (save-excursion
                 (goto-char (point-min))
@@ -199,8 +200,7 @@ Arguments:
          (new-file (make-temp-file "new" nil suffix)))
     (with-temp-file old-file (insert old))
     (with-temp-file new-file (insert new))
-    (diff-no-select old-file new-file "-U3" t buf)
-    (agent-shell-diff-mode)))
+    (diff-no-select old-file new-file "-U3" t buf)))
 
 (provide 'agent-shell-diff)
 
