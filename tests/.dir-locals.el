@@ -1,6 +1,7 @@
 ((nil . ((eval . (defun agent-shell-run-all-tests ()
                    "Run all agent-shell tests in batch mode."
                    (interactive)
+                   (require 'ert)
                    (mapatoms (lambda (sym)
                                (when (and (ert-test-boundp sym)
                                           (string-prefix-p "agent-shell" (symbol-name sym)))
