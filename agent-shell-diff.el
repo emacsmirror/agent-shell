@@ -108,8 +108,10 @@ Arguments:
             (let ((inhibit-read-only t)
                   (diff-mode-read-only nil))
               (erase-buffer)
+              ;; Set mode before inserting diff so diff-no-select
+              ;; doesn't reset font-lock (see #316).
+              (agent-shell-diff-mode)
               (agent-shell-diff--insert-diff old new file diff-buffer)
-              (agent-shell-diff-mode) ;; Must happen after inserting diff
               ;; Add overlays to hide scary text.
               (save-excursion
                 (goto-char (point-min))
