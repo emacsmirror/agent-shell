@@ -1274,18 +1274,13 @@ COMMAND, when present, may be a shell command string or an argv vector."
                           ;; See https://github.com/xenodium/agent-shell/issues/182
                           ;; See https://github.com/xenodium/agent-shell/issues/309
                           (when-let* ((new-title (map-elt update 'title))
-                                      (old-title (map-nested-elt state `(:tool-calls ,.toolCallId :title)))
-                                      (should-upgrade-title
-                                       (and (not (string-empty-p new-title))
-                                            (not (string= old-title new-title)))))
+                                      ((not (string-empty-p new-title))))
                             (list (cons :title new-title)))
                           (when-let* ((description (agent-shell--tool-call-command-to-string
-                                                    (map-nested-elt update '(rawInput description))))
-                                      ((not (map-nested-elt state `(:tool-calls ,.toolCallId :description)))))
+                                                    (map-nested-elt update '(rawInput description)))))
                             (list (cons :description description)))
                           (when-let* ((command (agent-shell--tool-call-command-to-string
-                                               (map-nested-elt update '(rawInput command))))
-                                      ((not (map-nested-elt state `(:tool-calls ,.toolCallId :command)))))
+                                               (map-nested-elt update '(rawInput command)))))
                             (list (cons :command command)))
                           (when-let ((raw-input (map-elt update 'rawInput)))
                             (list (cons :raw-input raw-input)))
