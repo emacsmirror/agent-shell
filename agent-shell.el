@@ -676,8 +676,9 @@ handles viewport mode detection, existing shell reuse, and project context."
                                           :new-session t))
                      (t
                       (agent-shell--shell-buffer)))))
-          (if (and new-shell
-                   (eq agent-shell-session-strategy 'prompt))
+          (if (and (eq (buffer-local-value 'agent-shell-session-strategy shell-buffer) 'prompt)
+                   (not (map-nested-elt (buffer-local-value 'agent-shell--state shell-buffer)
+                                        '(:session :id))))
               ;; Defer viewport display until session is selected.
               (agent-shell-subscribe-to
                :shell-buffer shell-buffer
@@ -714,10 +715,22 @@ handles viewport mode detection, existing shell reuse, and project context."
                                                         :shell-buffer shell-buffer)))
              (let* ((shell-buffer (agent-shell--shell-buffer))
                     (text (agent-shell--context :shell-buffer shell-buffer)))
-               (agent-shell--display-buffer shell-buffer)
-               (when text
-                 (agent-shell--insert-to-shell-buffer :text text
-                                                      :shell-buffer shell-buffer))))))))
+               (if (and (eq (buffer-local-value 'agent-shell-session-strategy shell-buffer) 'prompt)
+                        (not (map-nested-elt (buffer-local-value 'agent-shell--state shell-buffer)
+                                             '(:session :id))))
+                   ;; Defer viewport display until session is selected.
+                   (agent-shell-subscribe-to
+                    :shell-buffer shell-buffer
+                    :event 'session-selected
+                    :on-event (lambda (_event)
+                                (agent-shell--display-buffer shell-buffer)
+                                (when text
+                                  (agent-shell--insert-to-shell-buffer :text text
+                                                                       :shell-buffer shell-buffer))))
+                 (agent-shell--display-buffer shell-buffer)
+                 (when text
+                   (agent-shell--insert-to-shell-buffer :text text
+                                                        :shell-buffer shell-buffer)))))))))
 
 ;;;###autoload
 (defun agent-shell-toggle ()
@@ -2176,13 +2189,14 @@ FUNCTION should be a function accepting keyword arguments (&key ...)."
                    (list (car pair) (cdr pair)))
                  alist)))
 
-(cl-defun agent-shell--start (&key config no-focus new-session outgoing-request-decorator)
+(cl-defun agent-shell--start (&key config no-focus new-session session-strategy outgoing-request-decorator)
   "Programmatically start shell with CONFIG.
 
 See `agent-shell-make-agent-config' for config format.
 
 Set NO-FOCUS to start in background.
 Set NEW-SESSION to start a separate new session.
+SESSION-STRATEGY overrides `agent-shell-session-strategy' buffer-locally.
 OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'."
   (unless (version<= "0.85.1" shell-maker-version)
     (error "Please update shell-maker to version 0.85.1 or newer"))
@@ -2263,6 +2277,8 @@ variable (see makunbound)"))
         ;; of agent-shell's agent-shell--transcript-file usage.
         (fmakunbound 'agent-shell-save-session-transcript)
         (setq-local shell-maker-prompt-before-killing-buffer nil))
+      (when session-strategy
+        (setq-local agent-shell-session-strategy session-strategy))
       ;; Show deferred welcome text,
       ;; but first wipe buffer content.
       (let ((inhibit-read-only t))
@@ -2280,44 +2296,44 @@ variable (see makunbound)"))
            :config shell-maker--config
            :success nil)
         ;; Kick off ACP session bootstrapping.
-        (agent-shell--handle :shell-buffer shell-buffer)))
-    ;; Subscribe to session selection events (needed regardless of focus).
-    (when (eq agent-shell-session-strategy 'prompt)
-      (agent-shell-subscribe-to
-       :shell-buffer shell-buffer
-       :event 'session-selection-cancelled
-       :on-event (lambda (_event)
-                   (kill-buffer shell-buffer)))
-      (let ((active-message (agent-shell-active-message-show :text "Loading...")))
-        (agent-shell-subscribe-to
-         :shell-buffer shell-buffer
-         :event 'session-prompt
-         :on-event (lambda (_event)
-                     (agent-shell-active-message-hide :active-message active-message)))
-        (agent-shell-subscribe-to
-         :shell-buffer shell-buffer
-         :event 'session-selected
-         :on-event (lambda (_event)
-                     (agent-shell-active-message-hide :active-message active-message)))
+        (agent-shell--handle :shell-buffer shell-buffer))
+      ;; Subscribe to session selection events (needed regardless of focus).
+      (when (eq agent-shell-session-strategy 'prompt)
         (agent-shell-subscribe-to
          :shell-buffer shell-buffer
          :event 'session-selection-cancelled
          :on-event (lambda (_event)
-                     (agent-shell-active-message-hide :active-message active-message)))))
-    ;; Display buffer if no-focus was nil, respecting agent-shell-display-action
-    (unless no-focus
-      (if (eq agent-shell-session-strategy 'prompt)
-          ;; Defer display until user selects a session.
-          ;; Why? The experience is janky to display a buffer
-          ;; and soon after that prompt the user for input.
-          ;; Better to prompt the user for input and then
-          ;; display the buffer.
+                     (kill-buffer shell-buffer)))
+        (let ((active-message (agent-shell-active-message-show :text "Loading...")))
+          (agent-shell-subscribe-to
+           :shell-buffer shell-buffer
+           :event 'session-prompt
+           :on-event (lambda (_event)
+                       (agent-shell-active-message-hide :active-message active-message)))
           (agent-shell-subscribe-to
            :shell-buffer shell-buffer
            :event 'session-selected
            :on-event (lambda (_event)
-                       (agent-shell--display-buffer shell-buffer)))
-        (agent-shell--display-buffer shell-buffer)))
+                       (agent-shell-active-message-hide :active-message active-message)))
+          (agent-shell-subscribe-to
+           :shell-buffer shell-buffer
+           :event 'session-selection-cancelled
+           :on-event (lambda (_event)
+                       (agent-shell-active-message-hide :active-message active-message)))))
+      ;; Display buffer if no-focus was nil, respecting agent-shell-display-action
+      (unless no-focus
+        (if (eq agent-shell-session-strategy 'prompt)
+            ;; Defer display until user selects a session.
+            ;; Why? The experience is janky to display a buffer
+            ;; and soon after that prompt the user for input.
+            ;; Better to prompt the user for input and then
+            ;; display the buffer.
+            (agent-shell-subscribe-to
+             :shell-buffer shell-buffer
+             :event 'session-selected
+             :on-event (lambda (_event)
+                         (agent-shell--display-buffer shell-buffer)))
+          (agent-shell--display-buffer shell-buffer))))
     shell-buffer))
 
 (cl-defun agent-shell--delete-fragment (&key state block-id)
@@ -3403,7 +3419,7 @@ for the current year, or \"Mon DD, YYYY\" for other years."
         (concat (substring title 0 47) "...")
       title)))
 
-(defun agent-shell--session-choice-label (acp-session max-dir-width max-title-width)
+(cl-defun agent-shell--session-choice-label (&key acp-session max-dir-width max-title-width)
   "Return completion label for ACP-SESSION.
 MAX-DIR-WIDTH is the column width for the directory name.
 MAX-TITLE-WIDTH is the column width for the title."
@@ -3422,44 +3438,64 @@ MAX-TITLE-WIDTH is the column width for the title."
 (defun agent-shell--prompt-select-session (acp-sessions)
   "Prompt to choose one from ACP-SESSIONS.
 
-Return selected session alist, or nil to start a new session.
+Return selected session alist, nil to start a new session, or
+`:other-shell' when the user chose an existing shell (already
+displayed and bootstrapping shell killed).
 Falls back to latest session in batch mode (e.g. tests)."
-  (when acp-sessions
+  (when (or acp-sessions (agent-shell-buffers))
     (if noninteractive
         (car acp-sessions)
-    (let* ((max-dir-width (apply #'max (mapcar (lambda (s)
-                                                (length (agent-shell--session-dir-name s)))
-                                              acp-sessions)))
-           (max-title-width (apply #'max (mapcar (lambda (s)
-                                                   (length (agent-shell--session-title s)))
-                                                 acp-sessions)))
-           (new-session-choice "Start a new session")
-           (choices (cons (cons new-session-choice nil)
-                          (mapcar (lambda (acp-session)
-                                    (cons (agent-shell--session-choice-label acp-session max-dir-width max-title-width)
-                                          acp-session))
-                                  acp-sessions)))
-           (candidates (mapcar #'car choices))
-           ;; Some completion frameworks yielded appended (nil) to each line
-           ;; unless this-command was bound.
-           ;;
-           ;; For example:
-           ;;
-           ;; Let's build something                 Today, 16:25 (nil)
-           ;; Let's optimize the rocket engine      Feb 12, 21:02 (nil)
-           (this-command 'agent-shell))
-      (agent-shell--emit-event :event 'session-prompt)
-      (let ((selection (completing-read "Resume session (default: start new): "
-                                        (lambda (string pred action)
-                                          (if (eq action 'metadata)
-                                              '(metadata
-                                                (display-sort-function . identity)
-                                                (eager-display . t)
-                                                (eager-update . t))
-                                            (complete-with-action action candidates string pred)))
-                                        nil t nil nil
-                                        new-session-choice)))
-        (map-elt choices selection))))))
+      (let* ((other-shells (seq-remove (lambda (b) (eq b (current-buffer)))
+                                      (agent-shell-buffers)))
+             (new-session-choice "Start new shell")
+             (session-choices (append (list (cons new-session-choice nil))
+                              (when other-shells
+                                (list (cons "Open existing shell" :other-shell)))
+                              (mapcar (lambda (acp-session)
+                                        (cons (agent-shell--session-choice-label
+                                               :acp-session acp-session
+                                               :max-dir-width
+                                               (when acp-sessions
+                                                 (apply #'max (mapcar (lambda (s)
+                                                                        (length (agent-shell--session-dir-name s)))
+                                                                      acp-sessions)))
+                                               :max-title-width
+                                               (when acp-sessions
+                                                 (apply #'max (mapcar (lambda (s)
+                                                                        (length (agent-shell--session-title s)))
+                                                                      acp-sessions))))
+                                              acp-session))
+                                      acp-sessions)))
+             (candidates (mapcar #'car session-choices))
+             ;; Some completion frameworks yielded appended (nil) to each line
+             ;; unless this-command was bound.
+             ;;
+             ;; For example:
+             ;;
+             ;; Let's build something                 Today, 16:25 (nil)
+             ;; Let's optimize the rocket engine      Feb 12, 21:02 (nil)
+             (this-command 'agent-shell))
+        (agent-shell--emit-event :event 'session-prompt)
+        (let ((selection (completing-read "Start shell (default: new): "
+                                          (lambda (string pred action)
+                                            (if (eq action 'metadata)
+                                                '(metadata
+                                                  (display-sort-function . identity)
+                                                  (eager-display . t)
+                                                  (eager-update . t))
+                                              (complete-with-action action candidates string pred)))
+                                          nil t nil nil
+                                          new-session-choice)))
+          (if (eq (map-elt session-choices selection) :other-shell)
+              (let ((other-shell (get-buffer
+                                  (completing-read "Choose a shell: "
+                                                   (mapcar #'buffer-name other-shells)
+                                                   nil t)))
+                    (bootstrapping-shell (map-elt (agent-shell--state) :buffer)))
+                (agent-shell--display-buffer other-shell)
+                (kill-buffer bootstrapping-shell)
+                :other-shell)
+            (map-elt session-choices selection)))))))
 
 
 (cl-defun agent-shell--set-session-from-response (&key acp-response acp-session-id)
@@ -3592,9 +3628,10 @@ Falls back to latest session in batch mode (e.g. tests)."
                                  ('prompt (agent-shell--prompt-select-session acp-sessions))
                                  (_ (message "Unknown session strategy '%s', starting a new session"
                                              agent-shell-session-strategy)
-                                    nil)))
-                              (acp-session-id (and acp-session
-                                                   (map-elt acp-session 'sessionId))))
+                                    nil))))
+                         (unless (eq acp-session :other-shell)
+                         (let ((acp-session-id (and acp-session
+                                                    (map-elt acp-session 'sessionId))))
                          (agent-shell--emit-event
                           :event 'session-selected
                           :data (list (cons :session-id acp-session-id)))
@@ -3649,7 +3686,7 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                :on-session-init on-session-init))))
                            (agent-shell--initiate-new-session
                             :shell-buffer shell-buffer
-                            :on-session-init on-session-init)))
+                            :on-session-init on-session-init)))))
                      (quit
                       (agent-shell--emit-event :event 'session-selection-cancelled)))))
    :on-failure (lambda (_error _raw-message)
@@ -4009,20 +4046,29 @@ Returns a buffer object or nil."
       (if no-create
           (unless no-error
             (user-error "No agent shell buffers available for current project"))
-        (if (y-or-n-p "No shells in project.  Start a new one? ")
-            (get-buffer
-             (agent-shell--start :config (or (agent-shell--resolve-preferred-config)
-                                             (agent-shell-select-config
-                                              :prompt "Start new agent: ")
-                                             (error "No agent config found"))
-                                 :no-focus t
-                                 :new-session t))
-          (if-let ((shell-buffers (agent-shell-buffers)))
-              (get-buffer (completing-read "Choose a shell: "
-                                           (mapcar #'buffer-name shell-buffers)
-                                           nil t))
-            (unless no-error
-              (user-error "No agent shell buffers available"))))))))
+        (if (and (eq agent-shell-session-strategy 'new-deferred)
+                 (agent-shell-buffers))
+            (let* ((start-new "Start new shell")
+                   (open-existing "Open existing shell")
+                   (choice (completing-read "Start shell (default: new): "
+                                            (list start-new open-existing) nil t)))
+              (if (equal choice open-existing)
+                  (get-buffer (completing-read "Choose a shell: "
+                                               (mapcar #'buffer-name (agent-shell-buffers))
+                                               nil t))
+                (agent-shell--start :config (or (agent-shell--resolve-preferred-config)
+                                                (agent-shell-select-config
+                                                 :prompt "Start new agent: ")
+                                                (error "No agent config found"))
+                                    :no-focus t
+                                    :new-session t)))
+          (agent-shell--start :config (or (agent-shell--resolve-preferred-config)
+                                          (agent-shell-select-config
+                                           :prompt "Start new agent: ")
+                                          (error "No agent config found"))
+                              :no-focus t
+                              :new-session t
+                              :session-strategy agent-shell-session-strategy))))))
 
 (defun agent-shell--current-shell ()
   "Current shell for viewport or shell buffer."
