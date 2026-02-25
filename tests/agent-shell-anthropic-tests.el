@@ -77,6 +77,30 @@
             (should (member "NEW_VAR=new_value" env-vars))
             (should (member "EXISTING_VAR=existing_value" env-vars)))
         (when (buffer-live-p test-buffer)
+          (kill-buffer test-buffer))))
+
+    ;; Test with OAuth token string
+    (let* ((agent-shell-anthropic-authentication '(:oauth "test-oauth-token"))
+           (agent-shell-anthropic-claude-acp-command '("claude-agent-acp"))
+           (agent-shell-anthropic-claude-environment '())
+           (test-buffer (get-buffer-create "*test-buffer*"))
+           (client (agent-shell-anthropic-make-claude-client :buffer test-buffer))
+           (env-vars (map-elt client :environment-variables)))
+      (unwind-protect
+          (should (member "CLAUDE_CODE_OAUTH_TOKEN=test-oauth-token" env-vars))
+        (when (buffer-live-p test-buffer)
+          (kill-buffer test-buffer))))
+
+    ;; Test with function-based OAuth token
+    (let* ((agent-shell-anthropic-authentication `(:oauth ,(lambda () "dynamic-oauth-token")))
+           (agent-shell-anthropic-claude-acp-command '("claude-agent-acp"))
+           (agent-shell-anthropic-claude-environment '())
+           (test-buffer (get-buffer-create "*test-buffer*"))
+           (client (agent-shell-anthropic-make-claude-client :buffer test-buffer))
+           (env-vars (map-elt client :environment-variables)))
+      (unwind-protect
+          (should (member "CLAUDE_CODE_OAUTH_TOKEN=dynamic-oauth-token" env-vars))
+        (when (buffer-live-p test-buffer)
           (kill-buffer test-buffer))))))
 
 (ert-deftest agent-shell-anthropic-default-model-id-function-test ()
