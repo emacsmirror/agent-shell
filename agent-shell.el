@@ -1413,6 +1413,13 @@ COMMAND, when present, may be a shell command string or an argv vector."
                     (when-let ((diff (agent-shell--make-diff-info
                                       :tool-call .params.toolCall)))
                       (list (cons :diff diff)))))
+           (when-let ((plan .params.toolCall.rawInput.plan))
+             (agent-shell--update-fragment
+              :state state
+              :block-id (concat .params.toolCall.toolCallId "-plan")
+              :label-left (propertize "Proposed plan" 'font-lock-face 'font-lock-doc-markup-face)
+              :body plan
+              :expanded t))
            (agent-shell--update-fragment
             :state state
             ;; block-id must be the same as the one used
