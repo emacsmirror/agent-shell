@@ -36,25 +36,31 @@
 (autoload 'agent-shell-make-agent-config "agent-shell")
 (declare-function agent-shell--dwim "agent-shell")
 
-(cl-defun agent-shell-anthropic-make-authentication (&key api-key login)
+(cl-defun agent-shell-anthropic-make-authentication (&key api-key login oauth)
   "Create anthropic authentication configuration.
 
-API-KEY is the Anthropic API key string.
+API-KEY is the Anthropic API key string or a function returning one.
 LOGIN when non-nil indicates to use login-based authentication.
+OAUTH is an OAuth token string or a function returning one.
 
-Only one of API-KEY or LOGIN should be provided, never both."
+Only one of API-KEY, LOGIN, or OAUTH should be provided, never more than one."
   (when (and api-key login)
     (error "Cannot specify both :api-key and :login - choose one"))
-  (unless (or api-key login)
-    (error "Must specify either :api-key or :login"))
+  (when (and oauth login)
+    (error "Cannot specify both :oauth and :login - choose one"))
+  (when (and api-key oauth)
+    (error "Cannot specify both :api-key and :oauth - choose one"))
+  (unless (or api-key login oauth)
+    (error "Must specify either :api-key, :login, or :oauth"))
   (cond
+   (oauth `((:oauth . ,oauth)))
    (api-key `((:api-key . ,api-key)))
    (login `((:login . t)))))
 
 (defcustom agent-shell-anthropic-authentication
   (agent-shell-anthropic-make-authentication :login t)
   "Configuration for Anthropic authentication.
-For Subcription/login (default):
+For subscription/login (default):
 
   (setq agent-shell-anthropic-authentication
         (agent-shell-anthropic-make-authentication :login t))
@@ -62,12 +68,22 @@ For Subcription/login (default):
 For api key:
 
   (setq agent-shell-anthropic-authentication
-        (agent-shell-make-anthropic-authentication :api-key \"your-key\"))
+        (agent-shell-anthropic-make-authentication :api-key \"your-key\"))
 
   or
 
   (setq agent-shell-anthropic-authentication
-        (agent-shell-make-anthropic-authentication :api-key (lambda () ... )))"
+        (agent-shell-anthropic-make-authentication :api-key (lambda () ... )))
+
+For OAuth token:
+
+  (setq agent-shell-anthropic-authentication
+        (agent-shell-anthropic-make-authentication :oauth \"your-token\"))
+
+  or
+
+  (setq agent-shell-anthropic-authentication
+        (agent-shell-anthropic-make-authentication :oauth (lambda () ... )))"
   :type 'alist
   :group 'agent-shell)
 
@@ -159,6 +175,9 @@ additional environment variables."
                                             (agent-shell-anthropic-key))))
                              ((map-elt agent-shell-anthropic-authentication :login)
                               (list "ANTHROPIC_API_KEY="))
+                             ((map-elt agent-shell-anthropic-authentication :oauth)
+                              (list (format "CLAUDE_CODE_OAUTH_TOKEN=%s"
+                                            (agent-shell-anthropic-oauth-token))))
                              (t
                               (error "Invalid authentication configuration")))))
     (agent-shell--make-acp-client :command (car agent-shell-anthropic-claude-acp-command)
@@ -176,6 +195,18 @@ additional environment variables."
              (funcall (map-elt agent-shell-anthropic-authentication :api-key))
            (error
             "Api key not found.  Check out `agent-shell-anthropic-authentication'")))
+        (t
+         nil)))
+
+(defun agent-shell-anthropic-oauth-token ()
+  "Get the Anthropic OAuth token."
+  (cond ((stringp (map-elt agent-shell-anthropic-authentication :oauth))
+         (map-elt agent-shell-anthropic-authentication :oauth))
+        ((functionp (map-elt agent-shell-anthropic-authentication :oauth))
+         (condition-case _err
+             (funcall (map-elt agent-shell-anthropic-authentication :oauth))
+           (error
+            "OAuth token not found.  Check out `agent-shell-anthropic-authentication'")))
         (t
          nil)))
 
