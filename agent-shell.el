@@ -1277,18 +1277,13 @@ COMMAND, when present, may be a shell command string or an argv vector."
                           ;; See https://github.com/xenodium/agent-shell/issues/182
                           ;; See https://github.com/xenodium/agent-shell/issues/309
                           (when-let* ((new-title (map-elt update 'title))
-                                      (old-title (map-nested-elt state `(:tool-calls ,.toolCallId :title)))
-                                      (should-upgrade-title
-                                       (and (not (string-empty-p new-title))
-                                            (not (string= old-title new-title)))))
+                                      ((not (string-empty-p new-title))))
                             (list (cons :title new-title)))
                           (when-let* ((description (agent-shell--tool-call-command-to-string
-                                                    (map-nested-elt update '(rawInput description))))
-                                      ((not (map-nested-elt state `(:tool-calls ,.toolCallId :description)))))
+                                                    (map-nested-elt update '(rawInput description)))))
                             (list (cons :description description)))
                           (when-let* ((command (agent-shell--tool-call-command-to-string
-                                               (map-nested-elt update '(rawInput command))))
-                                      ((not (map-nested-elt state `(:tool-calls ,.toolCallId :command)))))
+                                               (map-nested-elt update '(rawInput command)))))
                             (list (cons :command command)))
                           (when-let ((raw-input (map-elt update 'rawInput)))
                             (list (cons :raw-input raw-input)))
@@ -1429,6 +1424,13 @@ COMMAND, when present, may be a shell command string or an argv vector."
                     (when-let ((diff (agent-shell--make-diff-info
                                       :tool-call .params.toolCall)))
                       (list (cons :diff diff)))))
+           (when-let ((plan .params.toolCall.rawInput.plan))
+             (agent-shell--update-fragment
+              :state state
+              :block-id (concat .params.toolCall.toolCallId "-plan")
+              :label-left (propertize "Proposed plan" 'font-lock-face 'font-lock-doc-markup-face)
+              :body plan
+              :expanded t))
            (agent-shell--update-fragment
             :state state
             ;; block-id must be the same as the one used
