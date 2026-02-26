@@ -1869,6 +1869,8 @@ DIFF should be in the form returned by `agent-shell--make-diff-info':
 (cl-defun agent-shell--make-error-handler (&key state shell-buffer)
   "Create ACP error handler with SHELL-BUFFER STATE."
   (lambda (error raw-message)
+    (agent-shell-heartbeat-stop
+     :heartbeat (map-elt state :heartbeat))
     (let-alist error
       (with-current-buffer (map-elt state :buffer)
         (agent-shell--update-fragment
