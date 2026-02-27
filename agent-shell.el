@@ -141,31 +141,28 @@ returns the resolved path.  Set to nil to disable mapping."
   :type 'function
   :group 'agent-shell)
 
-(defcustom agent-shell-container-command-runner nil
-  "Command prefix for executing commands in a container.
+(defcustom agent-shell-command-prefix nil
+  "Prefix to apply when executing agent commands and shell commands.
 
-When non-nil, both the agent command and shell commands will be
-executed using this runner.  Can be a list of strings or a function
-that takes a buffer and returns a list.
+Can be a list of strings or a function or lambda that takes a buffer and
+returns a list of strings.
 
-Example for static devcontainer:
+Example for static list of strings:
   \\='(\"devcontainer\" \"exec\" \"--workspace-folder\" \".\")
 
-Example for dynamic per-agent containers:
+Example for a lambda:
   (lambda (buffer)
     (let ((config (agent-shell-get-config buffer)))
       (pcase (map-elt config :identifier)
         (\\='claude-code \\='(\"docker\" \"exec\" \"claude-dev\" \"--\"))
         (\\='gemini-cli \\='(\"docker\" \"exec\" \"gemini-dev\" \"--\"))
-        (_ \\='(\"devcontainer\" \"exec\" \".\")))))
-
-Example for per-session containers:
-  (lambda (buffer)
-    (if (string-match \"project-a\" (buffer-name buffer))
-        \\='(\"docker\" \"exec\" \"project-a-dev\" \"--\")
-      \\='(\"docker\" \"exec\" \"project-b-dev\" \"--\")))"
+        (_ (error \"Unknown identifier\")))))"
   :type '(choice (repeat string) function)
   :group 'agent-shell)
+
+(defvaralias
+  'agent-shell-container-command-runner
+  'agent-shell-command-prefix)
 
 (defcustom agent-shell-section-functions nil
   "Abnormal hook run after overlays are applied (experimental).
@@ -208,13 +205,10 @@ Sources are checked in order until one returns non-nil."
                                              command-params
                                              environment-variables
                                              context-buffer)
-  "Create an ACP client, optionally wrapping with container runner.
+  "Create an ACP client.
 
 COMMAND, COMMAND-PARAMS, ENVIRONMENT-VARIABLES, and CONTEXT-BUFFER are
-passed through to `acp-make-client'.
-
-If `agent-shell-container-command-runner' is set, the command will be
-wrapped with the runner prefix."
+passed through to `acp-make-client'."
   (let* ((full-command (append (list command) command-params))
          (wrapped-command (agent-shell--build-command-for-execution full-command)))
     (acp-make-client :command (car wrapped-command)
@@ -1099,24 +1093,21 @@ Flow:
   "Get the agent configuration for BUFFER.
 
 Returns the agent configuration alist for the given buffer, or nil
-if the buffer has no agent configuration.
-
-This function is intended for use in `agent-shell-container-command-runner'
-functions to access agent config properties like :identifier, :buffer-name, etc."
+if the buffer has no agent configuration."
   (with-current-buffer buffer
     (map-elt agent-shell--state :agent-config)))
 
 (defun agent-shell--build-command-for-execution (command)
-  "Build COMMAND for the configured execution environment.
+  "Build COMMAND for the current buffer's configured execution environment.
 
 COMMAND should be a list of command parts (executable and arguments).
-Returns the adapted command if a container runner is configured,
-otherwise returns COMMAND unchanged."
-  (pcase agent-shell-container-command-runner
+
+Applies `agent-shell-command-prefix', if set."
+  (pcase agent-shell-command-prefix
     ((pred functionp)
-     (append (funcall agent-shell-container-command-runner
-                      (current-buffer)) command))
-    ((pred listp) (append agent-shell-container-command-runner command))
+     (append (funcall agent-shell-command-prefix (current-buffer)) command))
+    ((pred listp)
+     (append agent-shell-command-prefix command))
     (_ command)))
 
 (defun agent-shell--tool-call-command-to-string (command)
@@ -5296,10 +5287,10 @@ Typically includes the container indicator, model, session mode and activity
 or nil if unavailable.
 
 For example: \" [C] [Sonnet] [Accept Edits] ░░░ \".
-Shows \" [C]\" when running in a container."
+Shows \" [C]\" when a command prefix is used."
   (when-let* (((derived-mode-p 'agent-shell-mode))
               ((memq agent-shell-header-style '(text none nil))))
-    (concat (when agent-shell-container-command-runner
+    (concat (when agent-shell-command-prefix
               (propertize " [C]"
                           'face 'font-lock-constant-face
                           'help-echo "Running in container"))
