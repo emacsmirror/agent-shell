@@ -1220,7 +1220,9 @@ code block content
 
 (ert-deftest agent-shell--prompt-select-session-nil-sessions-test ()
   "Test `agent-shell--prompt-select-session' returns nil for empty sessions."
-  (should-not (agent-shell--prompt-select-session nil)))
+  (cl-letf (((symbol-function 'agent-shell-buffers)
+             (lambda () nil)))
+    (should-not (agent-shell--prompt-select-session nil))))
 
 (ert-deftest agent-shell--initiate-session-strategy-new-skips-list-load ()
   "Test `agent-shell--initiate-session' skips list/load when strategy is `new'."
