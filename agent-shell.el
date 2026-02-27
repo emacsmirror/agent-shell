@@ -837,10 +837,10 @@ Includes shells accessed via viewport buffers, preserving visited order."
   (interactive)
   (cond ((or (derived-mode-p 'agent-shell-viewport-view-mode)
              (derived-mode-p 'agent-shell-viewport-edit-mode))
-         (agent-shell--display-buffer (or (agent-shell--shell-buffer
-                                          :viewport-buffer (current-buffer)
-                                          :no-create t)
-                                         "No shell available")))
+         (switch-to-buffer (or (agent-shell--shell-buffer
+                                :viewport-buffer (current-buffer)
+                                :no-create t)
+                               "No shell available")))
         ((derived-mode-p 'agent-shell-mode)
          (when-let ((viewport-buffer (or (agent-shell-viewport--buffer
                                           :shell-buffer (current-buffer))
@@ -848,7 +848,7 @@ Includes shells accessed via viewport buffers, preserving visited order."
            (with-current-buffer viewport-buffer
              (when (derived-mode-p 'agent-shell-viewport-view-mode)
                (agent-shell-viewport-refresh)))
-           (agent-shell--display-buffer viewport-buffer)))
+           (switch-to-buffer viewport-buffer)))
         (t
          (user-error "Not in an agent-shell buffer"))))
 
