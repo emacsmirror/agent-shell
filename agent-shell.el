@@ -1399,7 +1399,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
            (agent-shell--update-header-and-mode-line)
            ;; Note: This is session-level state, no need to set :last-entry-type
            nil)
-          (t
+          (acp-logging-enabled
            (agent-shell--update-fragment
             :state state
             :block-id "Session Update - fallback"
@@ -1407,7 +1407,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
             :create-new t
             :navigation 'never)
            (map-put! state :last-entry-type nil))))
-        (t
+        (acp-logging-enabled
          (agent-shell--update-fragment
           :state state
           :block-id "Notification - fallback"
