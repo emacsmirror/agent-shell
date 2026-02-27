@@ -1136,52 +1136,64 @@ COMMAND, when present, may be a shell command string or an argv vector."
            (let ((update (map-elt (map-elt notification 'params) 'update)))
              (cond
               ((equal (map-elt update 'sessionUpdate) "tool_call")
-               (agent-shell--save-tool-call
-                state
-                (map-elt update 'toolCallId)
-                (append (list (cons :title (cond
-                                            ((and (string= (map-elt update 'title) "Skill")
-                                                  (map-nested-elt update '(rawInput command)))
-                                             (format "Skill: %s"
-                                                     (agent-shell--tool-call-command-to-string
-                                                      (map-nested-elt update '(rawInput command)))))
-                                            (t
-                                             (map-elt update 'title))))
-                              (cons :status (map-elt update 'status))
-                              (cons :kind (map-elt update 'kind))
-                              (cons :command (agent-shell--tool-call-command-to-string
-                                              (map-nested-elt update '(rawInput command))))
-                              (cons :description (map-nested-elt update '(rawInput description)))
-                              (cons :content (map-elt update 'content))
-                              (cons :raw-input (map-elt update 'rawInput)))
-                        (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
-                          (list (cons :diff diff)))))
-               (agent-shell--emit-event
-                :event 'tool-call-update
-                :data (list (cons :tool-call-id (map-elt update 'toolCallId))
-                            (cons :tool-call (map-nested-elt state (list :tool-calls (map-elt update 'toolCallId))))))
-               (let ((tool-call-labels (agent-shell-make-tool-call-label
-                                        state (map-elt update 'toolCallId))))
-                 (agent-shell--update-fragment
-                  :state state
-                  :block-id (map-elt update 'toolCallId)
-                  :label-left (map-elt tool-call-labels :status)
-                  :label-right (map-elt tool-call-labels :title)
-                  :expanded agent-shell-tool-use-expand-by-default)
-                 ;; Display plan as markdown block if present
-                 (when-let ((plan (map-nested-elt update '(rawInput plan))))
+               ;; Notification is out of context (session/prompt finished).
+               ;; Cannot derive where to display, so show in minibuffer.
+               (if (not (shell-maker-busy))
+                   (message "%s %s (stale, consider reporting to ACP agent)"
+                            (agent-shell--make-status-kind-label
+                             :status (map-elt update 'status)
+                             :kind (map-elt update 'kind))
+                            (propertize (or (map-elt update 'title) "")
+                                        'face font-lock-doc-markup-face))
+                 (agent-shell--save-tool-call
+                  state
+                  (map-elt update 'toolCallId)
+                  (append (list (cons :title (cond
+                                              ((and (string= (map-elt update 'title) "Skill")
+                                                    (map-nested-elt update '(rawInput command)))
+                                               (format "Skill: %s"
+                                                       (agent-shell--tool-call-command-to-string
+                                                        (map-nested-elt update '(rawInput command)))))
+                                              (t
+                                               (map-elt update 'title))))
+                                (cons :status (map-elt update 'status))
+                                (cons :kind (map-elt update 'kind))
+                                (cons :command (agent-shell--tool-call-command-to-string
+                                                (map-nested-elt update '(rawInput command))))
+                                (cons :description (map-nested-elt update '(rawInput description)))
+                                (cons :content (map-elt update 'content))
+                                (cons :raw-input (map-elt update 'rawInput)))
+                          (when-let ((diff (agent-shell--make-diff-info :tool-call update)))
+                            (list (cons :diff diff)))))
+                 (agent-shell--emit-event
+                  :event 'tool-call-update
+                  :data (list (cons :tool-call-id (map-elt update 'toolCallId))
+                              (cons :tool-call (map-nested-elt state (list :tool-calls (map-elt update 'toolCallId))))))
+                 (let ((tool-call-labels (agent-shell-make-tool-call-label
+                                          state (map-elt update 'toolCallId))))
                    (agent-shell--update-fragment
                     :state state
-                    :block-id (concat (map-elt update 'toolCallId) "-plan")
-                    :label-left (propertize "Proposed plan" 'font-lock-face 'font-lock-doc-markup-face)
-                    :body plan
-                    :expanded t)))
-               (map-put! state :last-entry-type "tool_call"))
+                    :block-id (map-elt update 'toolCallId)
+                    :label-left (map-elt tool-call-labels :status)
+                    :label-right (map-elt tool-call-labels :title)
+                    :expanded agent-shell-tool-use-expand-by-default)
+                   ;; Display plan as markdown block if present
+                   (when (map-nested-elt update '(rawInput plan))
+                     (agent-shell--update-fragment
+                      :state state
+                      :block-id (concat (map-elt update 'toolCallId) "-plan")
+                      :label-left (propertize "Proposed plan" 'font-lock-face 'font-lock-doc-markup-face)
+                      :body (map-nested-elt update '(rawInput plan))
+                      :expanded t)))
+                 (map-put! state :last-entry-type "tool_call")))
               ((equal (map-elt update 'sessionUpdate) "agent_thought_chunk")
-               (let-alist update
-                 ;; (message "agent_thought_chunk: last-type=%s, will-append=%s"
-                 ;;          (map-elt state :last-entry-type)
-                 ;;          (equal (map-elt state :last-entry-type) "agent_thought_chunk"))
+               ;; Notification is out of context (session/prompt finished).
+               ;; Cannot derive where to display, so show in minibuffer.
+               (if (not (shell-maker-busy))
+                   (message "%s %s (stale, consider reporting to ACP agent): %s"
+                            agent-shell-thought-process-icon
+                            (propertize "Thought process" 'face font-lock-doc-markup-face)
+                            (truncate-string-to-width (map-nested-elt update '(content text)) 100))
                  (unless (equal (map-elt state :last-entry-type)
                                 "agent_thought_chunk")
                    (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
@@ -1189,7 +1201,7 @@ COMMAND, when present, may be a shell command string or an argv vector."
                     :text (format "## Agent's Thoughts (%s)\n\n" (format-time-string "%F %T"))
                     :file-path agent-shell--transcript-file))
                  (agent-shell--append-transcript
-                  :text .content.text
+                  :text (map-nested-elt update '(content text))
                   :file-path agent-shell--transcript-file)
                  (agent-shell--update-fragment
                   :state state
@@ -1199,31 +1211,35 @@ COMMAND, when present, may be a shell command string or an argv vector."
                                 agent-shell-thought-process-icon
                                 " "
                                 (propertize "Thought process" 'font-lock-face font-lock-doc-markup-face))
-                  :body .content.text
+                  :body (map-nested-elt update '(content text))
                   :append (equal (map-elt state :last-entry-type)
                                  "agent_thought_chunk")
-                  :expanded agent-shell-thought-process-expand-by-default))
-               (map-put! state :last-entry-type "agent_thought_chunk"))
+                  :expanded agent-shell-thought-process-expand-by-default)
+                 (map-put! state :last-entry-type "agent_thought_chunk")))
               ((equal (map-elt update 'sessionUpdate) "agent_message_chunk")
-               (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
-                 (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+               ;; Notification is out of context (session/prompt finished).
+               ;; Cannot derive where to display, so show in minibuffer.
+               (if (not (shell-maker-busy))
+                   (message "Agent message (stale, consider reporting to ACP agent): %s"
+                            (truncate-string-to-width (map-nested-elt update '(content text)) 100))
+                 (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
+                   (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+                   (agent-shell--append-transcript
+                    :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
+                    :file-path agent-shell--transcript-file))
                  (agent-shell--append-transcript
-                  :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
-                  :file-path agent-shell--transcript-file))
-               (let-alist update
-                 (agent-shell--append-transcript
-                  :text .content.text
+                  :text (map-nested-elt update '(content text))
                   :file-path agent-shell--transcript-file)
                  (agent-shell--update-fragment
                   :state state
                   :block-id (format "%s-agent_message_chunk"
                                     (map-elt state :chunked-group-count))
-                  :body .content.text
+                  :body (map-nested-elt update '(content text))
                   :create-new (not (equal (map-elt state :last-entry-type)
                                           "agent_message_chunk"))
                   :append t
-                  :navigation 'never))
-               (map-put! state :last-entry-type "agent_message_chunk"))
+                  :navigation 'never)
+                 (map-put! state :last-entry-type "agent_message_chunk")))
               ((equal (map-elt update 'sessionUpdate) "user_message_chunk")
                (let ((new-prompt-p (not (equal (map-elt state :last-entry-type)
                                                "user_message_chunk"))))
@@ -1262,11 +1278,19 @@ COMMAND, when present, may be a shell command string or an argv vector."
                   :expanded t))
                (map-put! state :last-entry-type "plan"))
               ((equal (map-elt update 'sessionUpdate) "tool_call_update")
-               (let-alist update
+               ;; Notification is out of context (session/prompt finished).
+               ;; Cannot derive where to display, so show in minibuffer.
+               (if (not (shell-maker-busy))
+                   (message "%s %s (stale, consider reporting to ACP agent)"
+                            (agent-shell--make-status-kind-label
+                             :status (map-elt update 'status)
+                             :kind (map-elt update 'kind))
+                            (propertize (or (map-elt update 'title) "")
+                                        'face font-lock-doc-markup-face))
                  ;; Update stored tool call data with new status and content
                  (agent-shell--save-tool-call
                   state
-                  .toolCallId
+                  (map-elt update 'toolCallId)
                   (append (list (cons :status (map-elt update 'status))
                                 (cons :content (map-elt update 'content)))
                           ;; The initial tool_call notification often has a
@@ -1291,17 +1315,16 @@ COMMAND, when present, may be a shell command string or an argv vector."
                             (list (cons :diff diff)))))
                  (agent-shell--emit-event
                   :event 'tool-call-update
-                  :data (list (cons :tool-call-id .toolCallId)
-                              (cons :tool-call (map-nested-elt state (list :tool-calls .toolCallId)))))
-                 (let* ((diff (map-nested-elt state `(:tool-calls ,.toolCallId :diff)))
+                  :data (list (cons :tool-call-id (map-elt update 'toolCallId))
+                              (cons :tool-call (map-nested-elt state `(:tool-calls ,(map-elt update 'toolCallId))))))
+                 (let* ((diff (map-nested-elt state `(:tool-calls ,(map-elt update 'toolCallId) :diff)))
                         (output (concat
                                  "\n\n"
                                  ;; TODO: Consider if there are other
                                  ;; types of content to display.
                                  (mapconcat (lambda (item)
-                                              (let-alist item
-                                                .content.text))
-                                            .content
+                                              (map-nested-elt item '(content text)))
+                                            (map-elt update 'content)
                                             "\n\n")
                                  "\n\n"))
                         (diff-text (agent-shell--format-diff-as-text diff))
@@ -1318,12 +1341,12 @@ COMMAND, when present, may be a shell command string or an argv vector."
                      (agent-shell--append-transcript
                       :text (agent-shell--make-transcript-tool-call-entry
                              :status (map-elt update 'status)
-                             :title (map-nested-elt state `(:tool-calls ,.toolCallId :title))
-                             :kind (map-nested-elt state `(:tool-calls ,.toolCallId :kind))
-                             :description (map-nested-elt state `(:tool-calls ,.toolCallId :description))
-                             :command (map-nested-elt state `(:tool-calls ,.toolCallId :command))
+                             :title (map-nested-elt state `(:tool-calls ,(map-elt update 'toolCallId) :title))
+                             :kind (map-nested-elt state `(:tool-calls ,(map-elt update 'toolCallId) :kind))
+                             :description (map-nested-elt state `(:tool-calls ,(map-elt update 'toolCallId) :description))
+                             :command (map-nested-elt state `(:tool-calls ,(map-elt update 'toolCallId) :command))
                              :parameters (agent-shell--extract-tool-parameters
-                                          (map-nested-elt state `(:tool-calls ,.toolCallId :raw-input)))
+                                          (map-nested-elt state `(:tool-calls ,(map-elt update 'toolCallId) :raw-input)))
                              :output body-text)
                       :file-path agent-shell--transcript-file))
                    ;; Hide permission after sending response.
@@ -1334,17 +1357,17 @@ COMMAND, when present, may be a shell command string or an argv vector."
                               (not (equal (map-elt update 'status) "pending")))
                      ;; block-id must be the same as the one used as
                      ;; agent-shell--update-fragment param by "session/request_permission".
-                     (agent-shell--delete-fragment :state state :block-id (format "permission-%s" .toolCallId)))
+                     (agent-shell--delete-fragment :state state :block-id (format "permission-%s" (map-elt update 'toolCallId))))
                    (let ((tool-call-labels (agent-shell-make-tool-call-label
-                                            state .toolCallId)))
+                                            state (map-elt update 'toolCallId))))
                      (agent-shell--update-fragment
                       :state state
-                      :block-id .toolCallId
+                      :block-id (map-elt update 'toolCallId)
                       :label-left (map-elt tool-call-labels :status)
                       :label-right (map-elt tool-call-labels :title)
                       :body (string-trim body-text)
-                      :expanded agent-shell-tool-use-expand-by-default))))
-               (map-put! state :last-entry-type "tool_call_update"))
+                      :expanded agent-shell-tool-use-expand-by-default)))
+                 (map-put! state :last-entry-type "tool_call_update")))
               ((equal (map-elt update 'sessionUpdate) "available_commands_update")
                (let-alist update
                  (map-put! state :available-commands (map-elt update 'availableCommands))
