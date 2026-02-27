@@ -415,12 +415,12 @@ configurations across every agent that you use.
 
 =agent-shell= provides rudimentary support for running agents and shell commands in containers.
 
-Use =agent-shell-container-command-runner= to prefix the command that starts the agent, or a shell command that should be run so it is executed inside the container.
+Use =agent-shell-command-prefix= to prefix the command that starts the agent, or a shell command that should be run so it is executed inside the container.
 
 *** Static command list
 
 #+begin_src emacs-lisp
-(setq agent-shell-container-command-runner '("devcontainer" "exec" "--workspace-folder" "."))
+(setq agent-shell-command-prefix '("devcontainer" "exec" "--workspace-folder" "."))
 #+end_src
 
 *** Function-based configuration
@@ -428,7 +428,7 @@ Use =agent-shell-container-command-runner= to prefix the command that starts the
 For dynamic per-agent containers, provide a function that takes the current agent-shell buffer and returns the command list:
 
 #+begin_src emacs-lisp
-(setq agent-shell-container-command-runner
+(setq agent-shell-command-prefix
       (lambda (buffer)
         (let ((config (agent-shell-get-config buffer)))
           (pcase (map-elt config :identifier)
@@ -442,7 +442,7 @@ For dynamic per-agent containers, provide a function that takes the current agen
 You can use different containers for different shell sessions, even of the same agent type:
 
 #+begin_src emacs-lisp
-(setq agent-shell-container-command-runner
+(setq agent-shell-command-prefix
       (lambda (buffer)
         ;; Different container based on project
         (if (string-match "project-a" (buffer-name buffer))
@@ -453,10 +453,10 @@ You can use different containers for different shell sessions, even of the same 
 Note that any =:environment-variables= you may have passed to =acp-make-client= will not apply to the agent process running inside the container. It's expected to inject environment variables by means of your devcontainer configuration / Dockerfile.
 
 Next, set an =agent-shell-path-resolver-function= that resolves container paths in the local working directory, and vice versa.
-Agent shell provides the =agent-shell--resolve-devcontainer-path= function for use with devcontainers specifically: it reads the =workspaceFolder= specified in =.devcontainer/devcontainer.json=, or uses the default value of =/workspaces/<repository-name>= otherwise.
+Agent shell provides the =agent-shell-devcontainer-resolve-path= function for use with devcontainers specifically: it reads the =workspaceFolder= specified in =.devcontainer/devcontainer.json=, or uses the default value of =/workspaces/<repository-name>= otherwise.
 
 #+begin_src emacs-lisp
-(setq agent-shell-path-resolver-function #'agent-shell--resolve-devcontainer-path)
+(setq agent-shell-path-resolver-function #'agent-shell-devcontainer-resolve-path)
 #+end_src
 
 Note that this allows the agent to access files on your local file-system. While care has been taken to restrict access to files in the local working directory, it's probably possible for a malicious agent to circumvent this restriction.
@@ -567,7 +567,7 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-busy-indicator-frames             | Frames for the busy indicator animation.                                        |
 | agent-shell-clipboard-image-handlers          | Handlers for saving clipboard images to a file.                                 |
 | agent-shell-completion-mode-hook              | Hook run after entering or leaving ‘agent-shell-completion-mode’.               |
-| agent-shell-container-command-runner          | Command prefix for executing commands in a container.                           |
+| agent-shell-command-prefix                    | Command prefix for executing commands in a container.                           |
 | agent-shell-context-sources                   | Sources to consider when determining M-x agent-shell automatic context.         |
 | agent-shell-cursor-acp-command                | Command and parameters for the Cursor agent client.                             |
 | agent-shell-cursor-environment                | Environment variables for the Cursor agent client.                              |

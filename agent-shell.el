@@ -52,6 +52,7 @@
 (require 'agent-shell-cline)
 (require 'agent-shell-completion)
 (require 'agent-shell-cursor)
+(require 'agent-shell-devcontainer)
 (require 'agent-shell-diff)
 (require 'agent-shell-droid)
 (require 'agent-shell-github)
@@ -141,31 +142,28 @@ returns the resolved path.  Set to nil to disable mapping."
   :type 'function
   :group 'agent-shell)
 
-(defcustom agent-shell-container-command-runner nil
-  "Command prefix for executing commands in a container.
+(defcustom agent-shell-command-prefix nil
+  "Prefix to apply when executing agent commands and shell commands.
 
-When non-nil, both the agent command and shell commands will be
-executed using this runner.  Can be a list of strings or a function
-that takes a buffer and returns a list.
+Can be a list of strings or a function or lambda that takes a buffer and
+returns a list of strings.
 
-Example for static devcontainer:
+Example for static list of strings:
   \\='(\"devcontainer\" \"exec\" \"--workspace-folder\" \".\")
 
-Example for dynamic per-agent containers:
+Example for a lambda:
   (lambda (buffer)
     (let ((config (agent-shell-get-config buffer)))
       (pcase (map-elt config :identifier)
         (\\='claude-code \\='(\"docker\" \"exec\" \"claude-dev\" \"--\"))
         (\\='gemini-cli \\='(\"docker\" \"exec\" \"gemini-dev\" \"--\"))
-        (_ \\='(\"devcontainer\" \"exec\" \".\")))))
-
-Example for per-session containers:
-  (lambda (buffer)
-    (if (string-match \"project-a\" (buffer-name buffer))
-        \\='(\"docker\" \"exec\" \"project-a-dev\" \"--\")
-      \\='(\"docker\" \"exec\" \"project-b-dev\" \"--\")))"
+        (_ (error \"Unknown identifier\")))))"
   :type '(choice (repeat string) function)
   :group 'agent-shell)
+
+(defvaralias
+  'agent-shell-container-command-runner
+  'agent-shell-command-prefix)
 
 (defcustom agent-shell-section-functions nil
   "Abnormal hook run after overlays are applied (experimental).
@@ -208,13 +206,10 @@ Sources are checked in order until one returns non-nil."
                                              command-params
                                              environment-variables
                                              context-buffer)
-  "Create an ACP client, optionally wrapping with container runner.
+  "Create an ACP client.
 
 COMMAND, COMMAND-PARAMS, ENVIRONMENT-VARIABLES, and CONTEXT-BUFFER are
-passed through to `acp-make-client'.
-
-If `agent-shell-container-command-runner' is set, the command will be
-wrapped with the runner prefix."
+passed through to `acp-make-client'."
   (let* ((full-command (append (list command) command-params))
          (wrapped-command (agent-shell--build-command-for-execution full-command)))
     (acp-make-client :command (car wrapped-command)
@@ -1098,24 +1093,21 @@ Flow:
   "Get the agent configuration for BUFFER.
 
 Returns the agent configuration alist for the given buffer, or nil
-if the buffer has no agent configuration.
-
-This function is intended for use in `agent-shell-container-command-runner'
-functions to access agent config properties like :identifier, :buffer-name, etc."
+if the buffer has no agent configuration."
   (with-current-buffer buffer
     (map-elt agent-shell--state :agent-config)))
 
 (defun agent-shell--build-command-for-execution (command)
-  "Build COMMAND for the configured execution environment.
+  "Build COMMAND for the current buffer's configured execution environment.
 
 COMMAND should be a list of command parts (executable and arguments).
-Returns the adapted command if a container runner is configured,
-otherwise returns COMMAND unchanged."
-  (pcase agent-shell-container-command-runner
+
+Applies `agent-shell-command-prefix', if set."
+  (pcase agent-shell-command-prefix
     ((pred functionp)
-     (append (funcall agent-shell-container-command-runner
-                      (current-buffer)) command))
-    ((pred listp) (append agent-shell-container-command-runner command))
+     (append (funcall agent-shell-command-prefix (current-buffer)) command))
+    ((pred listp)
+     (append agent-shell-command-prefix command))
     (_ command)))
 
 (defun agent-shell--tool-call-command-to-string (command)
@@ -1638,38 +1630,6 @@ function before returning."
 (defun agent-shell--resolve-path (path)
   "Resolve PATH using `agent-shell-path-resolver-function'."
   (funcall (or agent-shell-path-resolver-function #'identity) path))
-
-(defun agent-shell--get-devcontainer-workspace-path (cwd)
-  "Return devcontainer workspaceFolder for CWD, or default value if none found.
-
-See https://containers.dev for more information on devcontainers."
-  (let ((devcontainer-config-file-name (expand-file-name ".devcontainer/devcontainer.json" cwd)))
-    (condition-case _err
-        (map-elt (json-read-file devcontainer-config-file-name) 'workspaceFolder
-                 (concat "/workspaces/" (file-name-nondirectory (directory-file-name cwd)) "/"))
-      (file-missing (error "Not found: %s" devcontainer-config-file-name))
-      (permission-denied (error "Not readable: %s" devcontainer-config-file-name))
-      (json-string-format (error "No valid JSON: %s" devcontainer-config-file-name)))))
-
-(defun agent-shell--resolve-devcontainer-path (path)
-  "Resolve PATH from a devcontainer in the local filesystem, and vice versa.
-
-For example:
-
-- /workspace/README.md => /home/xenodium/projects/kitchen-sink/README.md
-- /home/xenodium/projects/kitchen-sink/README.md => /workspace/README.md"
-  (let* ((cwd (agent-shell-cwd))
-         (devcontainer-path (agent-shell--get-devcontainer-workspace-path cwd)))
-    (if (string-prefix-p cwd path)
-        (string-replace cwd devcontainer-path path)
-      (if agent-shell-text-file-capabilities
-          (if-let* ((is-dev-container (string-prefix-p devcontainer-path path))
-                    (local-path (expand-file-name (string-replace devcontainer-path cwd path))))
-              (or
-               (and (file-in-directory-p local-path cwd) local-path)
-               (error "Resolves to path outside of working directory: %s" path))
-            (error "Unexpected path outside of workspace folder: %s" path))
-        (error "Refuse to resolve to local filesystem with text file capabilities disabled: %s" path)))))
 
 (defun agent-shell--stop-reason-description (stop-reason)
   "Return a human-readable text description for STOP-REASON.
@@ -5313,10 +5273,10 @@ Typically includes the container indicator, model, session mode and activity
 or nil if unavailable.
 
 For example: \" [C] [Sonnet] [Accept Edits] ░░░ \".
-Shows \" [C]\" when running in a container."
+Shows \" [C]\" when a command prefix is used."
   (when-let* (((derived-mode-p 'agent-shell-mode))
               ((memq agent-shell-header-style '(text none nil))))
-    (concat (when agent-shell-container-command-runner
+    (concat (when agent-shell-command-prefix
               (propertize " [C]"
                           'face 'font-lock-constant-face
                           'help-echo "Running in container"))
