@@ -73,15 +73,15 @@ Extracts cumulative token counts from the response."
       (map-put! usage-state :cached-write-tokens cached-write))
     (map-put! state :usage usage-state)))
 
-(cl-defun agent-shell--update-usage-from-notification (&key state update)
-  "Update usage STATE from session/update notification UPDATE.
+(cl-defun agent-shell--update-usage-from-notification (&key state acp-update)
+  "Update usage STATE from session/update ACP-UPDATE.
 Extracts context window and cost information from usage_update notification."
   (let ((usage-state (map-elt state :usage)))
-    (when-let ((used (map-elt update 'used)))
+    (when-let ((used (map-elt acp-update 'used)))
       (map-put! usage-state :context-used used))
-    (when-let ((size (map-elt update 'size)))
+    (when-let ((size (map-elt acp-update 'size)))
       (map-put! usage-state :context-size size))
-    (when-let ((cost (map-elt update 'cost)))
+    (when-let ((cost (map-elt acp-update 'cost)))
       (when-let ((amount (map-elt cost 'amount)))
         (map-put! usage-state :cost-amount amount))
       (when-let ((currency (map-elt cost 'currency)))
