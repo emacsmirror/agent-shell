@@ -87,6 +87,16 @@ npm install -g @blowmage/cursor-agent-acp
 
 See https://github.com/blowmage/cursor-agent-acp-npm for details.
 
+*** Kiro CLI
+
+For Kiro CLI, install with:
+
+#+begin_src bash
+curl -fsSL https://cli.kiro.dev/install | bash
+#+end_src
+
+See https://kiro.dev/docs/cli/acp/ for details.
+
 *** Qwen Code
 
 For Qwen Code, install with:
@@ -385,6 +395,7 @@ Start a specific agent shell session directly:
 - =M-x agent-shell-google-start-gemini= - Start a Gemini agent session
 - =M-x agent-shell-goose-start-agent= - Start a Goose agent session
 - =M-x agent-shell-cursor-start-agent= - Start a Cursor agent session
+- =M-x agent-shell-kiro-start-agent= - Start a Kiro CLI agent session
 - =M-x agent-shell-mistral-start-vibe= - Start a Mistral Vibe agent session
 - =M-x agent-shell-qwen-start= - Start a Qwen Code agent session
 - =M-x agent-shell-droid-start-agent= - Start a Factory Droid agent session
