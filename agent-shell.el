@@ -143,6 +143,10 @@ returns the resolved path.  Set to nil to disable mapping."
   :type 'function
   :group 'agent-shell)
 
+(defvaralias
+  'agent-shell-container-command-runner
+  'agent-shell-command-prefix)
+
 (defcustom agent-shell-command-prefix nil
   "Prefix to apply when executing agent commands and shell commands.
 
@@ -161,10 +165,6 @@ Example for a lambda:
         (_ (error \"Unknown identifier\")))))"
   :type '(choice (repeat string) function)
   :group 'agent-shell)
-
-(defvaralias
-  'agent-shell-container-command-runner
-  'agent-shell-command-prefix)
 
 (defcustom agent-shell-section-functions nil
   "Abnormal hook run after overlays are applied (experimental).
