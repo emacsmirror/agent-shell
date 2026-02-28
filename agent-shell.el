@@ -320,6 +320,11 @@ Assume screenshot file path will be appended to this list."
                            (error "Command pngpaste failed with exit code %d" exit-code))))))
    (list (cons :command "xclip")
          (cons :save (lambda (file-path)
+                       (when (eq (window-system) 'x)
+                         (let ((targets (gui-get-selection 'CLIPBOARD 'TARGETS)))
+                           (unless (and (vectorp targets)
+                                        (seq-find (lambda (target) (eq target 'image/png)) targets))
+                             (error "No image/png in clipboard"))))
                        (with-temp-buffer
                          (set-buffer-multibyte nil)
                          (let ((exit-code (call-process "xclip" nil t nil
