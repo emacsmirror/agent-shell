@@ -1405,7 +1405,7 @@ code block content
 
 (ert-deftest agent-shell--session-choice-label-default-columns-test ()
   "Test `agent-shell--session-choice-label' with default columns."
-  (let ((agent-shell-session-selection-columns '(directory title date))
+  (let ((agent-shell-show-session-id nil)
         (session '((sessionId . "s1")
                    (title . "My session")
                    (cwd . "/home/user/project")
@@ -1424,12 +1424,12 @@ code block content
 
 (ert-deftest agent-shell--session-choice-label-with-session-id-test ()
   "Test `agent-shell--session-choice-label' includes session-id column."
-  (let ((agent-shell-session-selection-columns '(directory title session-id date))
+  (let ((agent-shell-show-session-id t)
         (session '((sessionId . "abc-123")
                    (title . "My session")
                    (cwd . "/home/user/project")
                    (updatedAt . "2026-01-19T14:00:00Z")))
-        (max-widths '((directory . 10) (title . 15) (session-id . 10) (date . 20))))
+        (max-widths '((directory . 10) (title . 15) (date . 20) (session-id . 10))))
     (let ((label (substring-no-properties
                   (agent-shell--session-choice-label
                    :acp-session session
@@ -1437,18 +1437,6 @@ code block content
       (should (string-match-p "abc-123" label))
       (should (string-match-p "project" label))
       (should (string-match-p "My session" label)))))
-
-(ert-deftest agent-shell--session-choice-label-single-column-test ()
-  "Test `agent-shell--session-choice-label' with a single column."
-  (let ((agent-shell-session-selection-columns '(session-id))
-        (session '((sessionId . "abc-123")))
-        (max-widths '((session-id . 10))))
-    (let ((label (substring-no-properties
-                  (agent-shell--session-choice-label
-                   :acp-session session
-                   :max-widths max-widths))))
-      ;; Single column = last column = no padding
-      (should (equal label "abc-123")))))
 
 (ert-deftest agent-shell--session-id-indicator-disabled-test ()
   "Test `agent-shell--session-id-indicator' returns nil when disabled."
@@ -1471,7 +1459,7 @@ code block content
         (let ((indicator (agent-shell--session-id-indicator)))
           (should indicator)
           (should (equal (substring-no-properties indicator)
-                         "[test-session-id]")))))))
+                         "test-session-id")))))))
 
 (ert-deftest agent-shell--session-id-indicator-no-session-test ()
   "Test `agent-shell--session-id-indicator' returns nil without active session."
@@ -1529,7 +1517,7 @@ code block content
         (let ((model (agent-shell--make-header-model agent-shell--state)))
           (should (assq :session-id model))
           (should (equal (substring-no-properties (map-elt model :session-id))
-                         "[test-session-id]"))))
+                         "test-session-id"))))
       ;; Disabled
       (let ((agent-shell-show-session-id nil))
         (let ((model (agent-shell--make-header-model agent-shell--state)))

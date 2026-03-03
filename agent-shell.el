@@ -279,11 +279,14 @@ Can be one of:
                  (const :tag "No header" nil))
   :group 'agent-shell)
 
-(defvar agent-shell-show-session-id nil
-  "Non-nil to display the session ID in the header.
+(defcustom agent-shell-show-session-id nil
+  "Non-nil to display the session ID in the header and session selection.
 
-When enabled, the session ID is shown after the directory path.
-Only appears when a session is active.")
+When enabled, the session ID is shown after the directory path in the
+header and as an additional column in the session selection prompt.
+Only appears when a session is active."
+  :type 'boolean
+  :group 'agent-shell)
 
 (defcustom agent-shell-show-welcome-message t
   "Non-nil to show welcome message."
@@ -486,16 +489,6 @@ Available values:
                  (const :tag "Load latest session" latest)
                  (const :tag "Prompt for session" prompt))
   :group 'agent-shell)
-
-(defvar agent-shell-session-selection-columns '(directory title date)
-  "Columns to display in the session selection prompt, in order.
-
-Each element is a symbol identifying a column:
-
-  `directory': The project directory name (last path component of cwd).
-  `title': The session title (truncated to 50 characters).
-  `date': The last-updated date in human-friendly format.
-  `session-id': The ACP session identifier.")
 
 (defun agent-shell--resolve-preferred-config ()
   "Resolve `agent-shell-preferred-agent-config' to a full configuration.
@@ -2705,7 +2698,7 @@ A buffer-local hash table mapping cache keys to header strings.")
   (when-let* ((agent-shell-show-session-id)
               (session-id (map-nested-elt (agent-shell--state) '(:session :id)))
               ((not (string-empty-p session-id))))
-    (propertize (format "[%s]" session-id) 'font-lock-face 'font-lock-constant-face)))
+    (propertize session-id 'font-lock-face 'font-lock-constant-face)))
 
 (cl-defun agent-shell--make-header-model (state &key qualifier bindings)
   "Create a header model alist from STATE, QUALIFIER, and BINDINGS.
@@ -2774,7 +2767,7 @@ BINDINGS is a list of alists defining key bindings to display, each with:
                               (propertize (string-remove-suffix "/" (abbreviate-file-name (map-elt header-model :directory)))
                                           'font-lock-face 'font-lock-string-face)
                               (if (map-elt header-model :session-id)
-                                  (concat " " (map-elt header-model :session-id))
+                                  (concat " ➤ " (map-elt header-model :session-id))
                                 "")
                               (if (map-elt header-model :context-indicator)
                                   (concat " " (map-elt header-model :context-indicator))
@@ -2899,15 +2892,18 @@ BINDINGS is a list of alists defining key bindings to display, each with:
                                                                   (string-remove-suffix "/" (abbreviate-file-name (map-elt header-model :directory)))))
                                       ;; Session ID (optional)
                                       (when (map-elt header-model :session-id)
-                                        (let* ((face (get-text-property 0 'font-lock-face (map-elt header-model :session-id)))
-                                               (color (if face
-                                                          (face-attribute face :foreground nil t)
-                                                        (face-attribute 'default :foreground))))
-                                          (dom-append-child text-node
-                                                            (dom-node 'tspan
-                                                                      `((fill . ,color)
-                                                                        (dx . "8"))
-                                                                      (substring-no-properties (map-elt header-model :session-id))))))
+                                        ;; Separator arrow (default foreground)
+                                        (dom-append-child text-node
+                                                          (dom-node 'tspan
+                                                                    `((fill . ,(face-attribute 'default :foreground))
+                                                                      (dx . "8"))
+                                                                    "➤"))
+                                        ;; Session ID text
+                                        (dom-append-child text-node
+                                                          (dom-node 'tspan
+                                                                    `((fill . ,(face-attribute 'font-lock-constant-face :foreground))
+                                                                      (dx . "8"))
+                                                                    (substring-no-properties (map-elt header-model :session-id)))))
                                       text-node))
                    ;; Bindings row (last row if bindings or qualifier present)
                    (when (or bindings qualifier)
@@ -3544,13 +3540,21 @@ COLUMN is a symbol: `directory', `title', `date', or `session-id'.
     ('session-id 'font-lock-constant-face)
     (_ nil)))
 
+(defun agent-shell--session-selection-columns ()
+  "Return the list of columns for session selection.
+Always includes directory, title, and date.  Appends session-id
+when `agent-shell-show-session-id' is non-nil."
+  (if agent-shell-show-session-id
+      '(directory title date session-id)
+    '(directory title date)))
+
 (cl-defun agent-shell--session-choice-label (&key acp-session max-widths)
   "Return completion label for ACP-SESSION.
-MAX-WIDTHS is an alist mapping column symbols to their max widths.
-Columns are determined by `agent-shell-session-selection-columns'."
-  (let (parts
-        (last-col (car (last agent-shell-session-selection-columns))))
-    (dolist (col agent-shell-session-selection-columns)
+MAX-WIDTHS is an alist mapping column symbols to their max widths."
+  (let* ((columns (agent-shell--session-selection-columns))
+         parts
+         (last-col (car (last columns))))
+    (dolist (col columns)
       (let* ((value (agent-shell--session-column-value col acp-session))
              (face (agent-shell--session-column-face col))
              (max-width (or (map-elt max-widths col) (length value)))
@@ -3576,13 +3580,14 @@ Falls back to latest session in batch mode (e.g. tests)."
       (let* ((other-shells (seq-remove (lambda (b) (eq b (current-buffer)))
                                       (agent-shell-buffers)))
              (new-session-choice "Start new shell")
+             (columns (agent-shell--session-selection-columns))
              (max-widths (when acp-sessions
                           (mapcar (lambda (col)
                                     (cons col (apply #'max
                                                      (mapcar (lambda (s)
                                                                (length (agent-shell--session-column-value col s)))
                                                              acp-sessions))))
-                                  agent-shell-session-selection-columns)))
+                                  columns)))
              (session-choices (append (list (cons new-session-choice nil))
                               (when other-shells
                                 (list (cons "Open existing shell" :other-shell)))
