@@ -1369,11 +1369,11 @@ COMMAND, when present, may be a shell command string or an argv vector."
                          :output body-text)
                   :file-path agent-shell--transcript-file))
                ;; Hide permission after sending response.
-               ;; Status and permission are no longer pending. User
+               ;; Status is completed or failed so the user
                ;; likely selected one of: accepted/rejected/always.
                ;; Remove stale permission dialog.
-               (when (and (map-nested-elt acp-notification '(params update status))
-                          (not (equal (map-nested-elt acp-notification '(params update status)) "pending")))
+               (when (member (map-nested-elt acp-notification '(params update status))
+                             '("completed" "failed"))
                  ;; block-id must be the same as the one used as
                  ;; agent-shell--update-fragment param by "session/request_permission".
                  (agent-shell--delete-fragment :state state :block-id (format "permission-%s" (map-nested-elt acp-notification '(params update toolCallId)))))
