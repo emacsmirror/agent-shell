@@ -537,6 +537,25 @@ Available values:
                  (const :tag "Prompt for session" prompt))
   :group 'agent-shell)
 
+(defcustom agent-shell-outgoing-request-decorator nil
+  "Function to decorate outgoing ACP requests before they are sent.
+
+When non-nil, this function is called with each outgoing request alist
+and must return the (possibly modified) request.  This is useful for
+injecting agent-specific metadata (e.g. system prompt extensions) into
+requests.
+
+The function receives the full request alist (with :method, :params, etc.)
+and should return the decorated request.  Returning nil is treated as an
+error and the original request is sent unchanged.
+
+This is passed through to `acp-make-client' as :outgoing-request-decorator.
+The keyword argument to `agent-shell-start' takes precedence over this
+variable when both are set."
+  :type '(choice (const :tag "None" nil)
+                 function)
+  :group 'agent-shell)
+
 (defun agent-shell--resolve-preferred-config ()
   "Resolve `agent-shell-preferred-agent-config' to a full configuration.
 
@@ -2419,7 +2438,8 @@ variable (see makunbound)"))
                                       :client-maker (map-elt config :client-maker)
                                       :needs-authentication (map-elt config :needs-authentication)
                                       :authenticate-request-maker (map-elt config :authenticate-request-maker)
-                                      :outgoing-request-decorator outgoing-request-decorator
+                                      :outgoing-request-decorator (or outgoing-request-decorator
+                                                                      agent-shell-outgoing-request-decorator)
                                       :agent-config config))
       ;; Initialize buffer-local shell-maker-config
       (setq-local agent-shell--shell-maker-config shell-maker-config)
