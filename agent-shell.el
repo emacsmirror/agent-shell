@@ -2420,12 +2420,17 @@ variable (see makunbound)"))
          (agent-shell--shell-maker-config shell-maker-config)
          (default-directory (agent-shell-cwd))
          (shell-buffer
-          (shell-maker-start agent-shell--shell-maker-config
-                             t  ;; Always use no-focus, handle display below
-                             nil ;; Defer showing welcome text
-                             new-session
-                             (agent-shell--format-buffer-name (map-elt config :buffer-name) (agent-shell--project-name))
-                             (map-elt config :mode-line-name))))
+          ;; Suppress mode hook during shell-maker-start since
+          ;; agent-shell state isn't ready yet.
+          ;;
+          ;; Fire it below once state is fully initialised.
+          (let ((agent-shell-mode-hook nil))
+            (shell-maker-start agent-shell--shell-maker-config
+                               t  ;; Always use no-focus, handle display below
+                               nil ;; Defer showing welcome text
+                               new-session
+                               (agent-shell--format-buffer-name (map-elt config :buffer-name) (agent-shell--project-name))
+                               (map-elt config :mode-line-name)))))
     ;; While sending the first prompt request would already validate
     ;; finding the ACP agent executable, users have to wait until they
     ;; type a prompt and send it, only to find out that they are missing
@@ -2509,6 +2514,10 @@ variable (see makunbound)"))
            :success nil)
         ;; Kick off ACP session bootstrapping.
         (agent-shell--handle :shell-buffer shell-buffer))
+      ;; State should be available after kicking off
+      ;; `agent-shell--handle'.  Fire mode hook so initial
+      ;; state is available to agent-shell-mode-hook(s).
+      (run-hooks 'agent-shell-mode-hook)
       ;; Subscribe to session selection events (needed regardless of focus).
       (when (eq agent-shell-session-strategy 'prompt)
         (agent-shell-subscribe-to
