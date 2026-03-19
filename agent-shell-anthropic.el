@@ -141,7 +141,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :buffer-name "Claude Code"
    :shell-prompt "Claude Code> "
    :shell-prompt-regexp "Claude Code> "
-   :icon-name "anthropic.png"
+   :icon-name "claudecode.png"
    :welcome-function #'agent-shell-anthropic--claude-code-welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-anthropic-make-claude-client :buffer buffer))
