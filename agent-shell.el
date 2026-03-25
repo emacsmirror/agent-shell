@@ -393,6 +393,11 @@ Assume screenshot file path will be appended to this list."
 
 (defcustom agent-shell-clipboard-image-handlers
   (list
+   (list (cons :command "wl-paste")
+         (cons :save (lambda (file-path)
+                       (let ((exit-code (call-process "wl-paste" nil `(:file ,file-path))))
+                         (unless (zerop exit-code)
+                           (error "Command wl-paste failed with exit code %d" exit-code))))))
    (list (cons :command "pngpaste")
          (cons :save (lambda (file-path)
                        (let ((exit-code (call-process "pngpaste" nil nil nil file-path)))
@@ -5101,7 +5106,7 @@ The image is saved to .agent-shell/screenshots in the project root.
 The saved image file path is then inserted into the shell prompt.
 
 When PICK-SHELL is non-nil, prompt for which shell buffer to use."
-  (interactive)
+  (interactive "P")
   (unless (window-system)
     (user-error "Clipboard image requires a window system"))
   (let* ((screenshots-dir (agent-shell--dot-subdir "screenshots"))

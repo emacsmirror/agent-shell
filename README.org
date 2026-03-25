@@ -502,6 +502,13 @@ For example, to store data under =user-emacs-directory= instead of the project t
 
 This stores data at a path like =~/.emacs.d/agent-shell/home-user-src-myproject/screenshots/=.
 
+*** Screenshots from clipboard
+
+You can send a screenshot from your clipboard to your shell with =agent-shell-send-clipboard-image=. Call with =C-u= to =agent-shell-send-clipboard-image-to= to select from your shells. agent-shell relies on external programs to write an image from clipboard to file as configured in =agent-shell-clipboard-image-handlers=. Preconfigured handlers are
+- =wl-paste= for Wayland desktops,
+- =xclip= for Xorg,
+- =pngpaste= for MacOS.
+
 *** Inhibiting minor modes during file writes
 
 Some minor modes (for example, =aggressive-indent-mode=) can interfere with an agent's edits.  Agent Shell can temporarily disable selected per-buffer minor modes while applying edits.
