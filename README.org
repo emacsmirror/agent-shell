@@ -260,6 +260,19 @@ For API key authentication:
        :api-key (lambda () (auth-source-pass-get 'secret "anthropic-api-key"))))
 #+end_src
 
+For OAuth token authentication (the =CLAUDE_CODE_OAUTH_TOKEN= we get from =claude setup-token=):
+
+#+begin_src emacs-lisp
+;; With string
+(setq agent-shell-anthropic-authentication
+      (agent-shell-anthropic-make-authentication :oauth "your-oauth-token-here"))
+
+;; With function
+(setq agent-shell-anthropic-authentication
+      (agent-shell-anthropic-make-authentication
+       :oauth (lambda () (auth-source-pass-get "secret" "anthropic-oauth-token"))))
+#+end_src
+
 For alternative Anthropic-compatible API endpoints, configure via environment variables:
 
 #+begin_src emacs-lisp
