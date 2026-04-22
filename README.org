@@ -100,6 +100,16 @@ npm install -g @blowmage/cursor-agent-acp
 
 See https://github.com/blowmage/cursor-agent-acp-npm for details.
 
+*** Kimi Code CLI
+
+For Kimi Code CLI, install with:
+
+#+begin_src bash
+curl -L code.kimi.com/install.sh | bash
+#+end_src
+
+See https://www.kimi.com/code for details.
+
 *** Kiro CLI
 
 For Kiro CLI, install with:
