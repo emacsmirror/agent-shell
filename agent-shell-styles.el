@@ -73,7 +73,7 @@ Returns a propertized string or nil."
                                         (map-elt status-config :face) nil t)))
                         (agent-shell--add-text-properties
                          (propertize (format label-format
-                                            (agent-shell--short-kind-label kind))
+                                             (agent-shell--short-kind-label kind))
                                      'font-lock-face 'default)
                          'font-lock-face `((:box (:color ,box-color))))))))
     (concat status-text kind-text)))
@@ -102,16 +102,14 @@ Returns a propertized string or nil."
          (label-format (if (display-graphic-p) " %s " "[%s]"))
          (status-text (when status
                         (propertize (format label-format
-                                           (map-elt status-config :label))
+                                            (map-elt status-config :label))
                                     'font-lock-face
-                                    `(:background ,bg :foreground ,fg
-                                      :weight bold))))
+                                    `(:background ,bg :foreground ,fg :weight bold))))
          (kind-text (when kind
                       (propertize (format label-format
-                                         (agent-shell--short-kind-label kind))
+                                          (agent-shell--short-kind-label kind))
                                   'font-lock-face
-                                  `(:background ,bg :foreground ,fg
-                                    :slant italic)))))
+                                  `(:background ,bg :foreground ,fg :slant italic)))))
     (concat status-text kind-text)))
 
 (defun agent-shell--unicode-icons-status-kind-label (status kind)
@@ -154,11 +152,11 @@ Returns a propertized string or nil."
          (label-format (if (display-graphic-p) " %s " "[%s]"))
          (status-text (when status
                         (propertize (format label-format
-                                           (map-elt status-config :label))
+                                            (map-elt status-config :label))
                                     'font-lock-face face)))
          (kind-text (when kind
                       (propertize (format label-format
-                                         (agent-shell--short-kind-label kind))
+                                          (agent-shell--short-kind-label kind))
                                   'font-lock-face face))))
     (concat status-text kind-text)))
 

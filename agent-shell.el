@@ -1397,7 +1397,7 @@ If DELETE is non-nil, delete the text between START and END."
             (exclude (seq-find (lambda (ov)
                                  (memq (overlay-get ov 'markdown-overlays-markup-type)
                                        '(fence language inline-code
-                                         bold italic strikethrough header)))
+                                               bold italic strikethrough header)))
                                (overlays-at pos))))
         (unless exclude
           (setq text (concat text (buffer-substring pos (min next end)))))
@@ -2783,7 +2783,7 @@ Returns propertized labels in :status and :title propertized."
                     ;; "[read] file.el"
                     (if (and (map-elt tool-call :kind)
                              (string-match-p (concat "\\`" (regexp-quote
-                                                           (map-elt tool-call :kind)) " ")
+                                                            (map-elt tool-call :kind)) " ")
                                              (downcase text)))
                         (string-trim-left (substring text (length (map-elt tool-call :kind))))
                       text)))
@@ -6477,7 +6477,7 @@ Returns non-nil if a permission button was found, nil otherwise."
                          (when-let* ((next-change (next-single-property-change (point) 'agent-shell-permission-button)))
                            (goto-char next-change)))
                        (when-let* ((next (text-property-search-forward
-                                         'agent-shell-permission-button t t)))
+                                          'agent-shell-permission-button t t)))
                          (prop-match-beginning next)))))
     (deactivate-mark)
     (goto-char found)
