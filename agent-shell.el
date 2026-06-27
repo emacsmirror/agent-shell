@@ -5872,8 +5872,8 @@ Example:
         (write-region (base64-decode-string data) nil file nil 'silent)))
     file))
 
-(defun agent-shell--content-block-to-markdown (content-block)
-  "Return markdown for a `session/update' CONTENT-BLOCK.
+(defun agent-shell--content-block-to-markdown (acp-content-block)
+  "Return markdown for a `session/update' ACP-CONTENT-BLOCK.
 
 Text blocks return their text.  Image blocks (a content block whose `type'
 is \"image\", e.g. an agent returning a screenshot) return a markdown image
@@ -5888,8 +5888,12 @@ local cache file and emitted as a bare path (not a `file://' URI) so the
 renderer resolves it without URI parsing.  An image block with no renderable
 payload returns an empty string.
 
-Any other block type (audio, resource, resource_link, or a future type we
-don't render yet) returns a \"[unsupported content: TYPE]\" placeholder, so
+A `resource_link' block returns a markdown link (`name' as the label, `uri'
+as the target) so the renderer's link machinery makes it clickable.  An
+embedded `resource' block carrying text returns that text as a blockquote.
+
+Any other block type (audio, a binary `resource', or a future type we don't
+render yet) returns a \"[unsupported content: TYPE]\" placeholder, so
 unhandled content stays visible rather than being silently dropped.
 
 Examples:
@@ -5901,17 +5905,33 @@ Examples:
   (agent-shell--content-block-to-markdown
    \\='((type . \"image\") (uri . \"file:///tmp/shot.png\")))
   => \"\\n\\n![image](file:///tmp/shot.png)\\n\\n\""
-  (pcase (map-elt content-block 'type)
-    ("text" (or (map-elt content-block 'text) ""))
+  (pcase (map-elt acp-content-block 'type)
+    ("text" (or (map-elt acp-content-block 'text) ""))
     ("image"
-     (if-let* ((source (or (map-elt content-block 'uri)
+     (if-let* ((source (or (map-elt acp-content-block 'uri)
                            (agent-shell--image-data-to-file
-                            (map-elt content-block 'data)
-                            (map-elt content-block 'mimeType)))))
+                            (map-elt acp-content-block 'data)
+                            (map-elt acp-content-block 'mimeType)))))
          (format "\n\n![%s](%s)\n\n"
-                 (or (map-elt content-block 'name) "image")
+                 (or (map-elt acp-content-block 'name) "image")
                  source)
        ""))
+    ("resource_link"
+     (if-let* ((uri (map-elt acp-content-block 'uri)))
+         (format "\n\n[%s](%s)\n\n" (or (map-elt acp-content-block 'name) uri) uri)
+       (or (map-elt acp-content-block 'name) "")))
+    ("resource"
+     ;; Embedded text resource -> a blockquote so the content is set apart
+     ;; from the agent's prose rather than dropped.  A binary (blob) resource
+     ;; has no text and falls through to the placeholder.
+     (if-let* ((text (map-nested-elt acp-content-block '(resource text))))
+         (concat "\n\n"
+                 (mapconcat (lambda (line) (concat "> " line))
+                            (split-string text "\n")
+                            "\n")
+                 "\n\n")
+       (format "[unsupported content: %s]"
+               (or (map-elt acp-content-block 'type) "resource"))))
     (type (format "[unsupported content: %s]" (or type "unknown")))))
 
 (cl-defun agent-shell--collect-attached-files (content-blocks)

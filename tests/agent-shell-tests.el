@@ -434,6 +434,29 @@ image-rendering path as `![alt](uri)'."
                     (uri . "https://example.com/x.png")))
                  "\n\n![image](https://example.com/x.png)\n\n"))
 
+  ;; A resource_link block -> a markdown link (name as label, uri as target)
+  ;; so the renderer's link machinery makes it clickable.
+  (should (equal (agent-shell--content-block-to-markdown
+                  '((type . "resource_link")
+                    (name . "report.pdf")
+                    (uri . "file:///tmp/report.pdf")))
+                 "\n\n[report.pdf](file:///tmp/report.pdf)\n\n"))
+
+  ;; An embedded resource with text -> a blockquote (content set apart, not
+  ;; dropped).
+  (should (equal (agent-shell--content-block-to-markdown
+                  '((type . "resource")
+                    (resource . ((uri . "file:///tmp/note.txt")
+                                 (mimeType . "text/plain")
+                                 (text . "line1\nline2")))))
+                 "\n\n> line1\n> line2\n\n"))
+
+  ;; A binary (blob) embedded resource has no text -> placeholder (deferred).
+  (should (equal (agent-shell--content-block-to-markdown
+                  '((type . "resource")
+                    (resource . ((uri . "file:///tmp/x.bin") (blob . "AAAA")))))
+                 "[unsupported content: resource]"))
+
   ;; Unhandled block type -> a visible placeholder (so lagging support is
   ;; spottable), not a silent drop.
   (should (equal (agent-shell--content-block-to-markdown

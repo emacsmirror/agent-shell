@@ -1400,6 +1400,68 @@ unaffected."
     ;; A non-existent local path still resolves to nil (no fetch attempted).
     (should-not (agent-shell-markdown--resolve-image-url "/no/such/file.png"))))
 
+(ert-deftest agent-shell-markdown--open-externally-test ()
+  "Test `agent-shell-markdown--open-externally' gates on confirmation."
+  (let ((opened nil))
+    (cl-letf (((symbol-function 'shell-command-do-open)
+               (lambda (files) (setq opened files)))
+              ((symbol-function 'browse-url-of-file)
+               (lambda (file) (setq opened (list file)))))
+      ;; Confirmed -> opens.
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+        (setq opened nil)
+        (agent-shell-markdown--open-externally "/tmp/x.bin")
+        (should (equal opened '("/tmp/x.bin"))))
+      ;; Declined -> does nothing.
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil)))
+        (setq opened nil)
+        (agent-shell-markdown--open-externally "/tmp/x.bin")
+        (should-not opened)))))
+
+(ert-deftest agent-shell-markdown--binary-file-p-test ()
+  "Test `agent-shell-markdown--binary-file-p' NUL-byte heuristic."
+  (let ((text (make-temp-file "agent-shell-text"))
+        (binary (make-temp-file "agent-shell-binary")))
+    (unwind-protect
+        (progn
+          (with-temp-file text (insert "plain text\nmore"))
+          (let ((coding-system-for-write 'binary))
+            (with-temp-file binary (insert "abc\0def")))
+          (should-not (agent-shell-markdown--binary-file-p text))
+          (should (agent-shell-markdown--binary-file-p binary)))
+      (delete-file text)
+      (delete-file binary))))
+
+(ert-deftest agent-shell-markdown--open-local-link-binary-vs-text-test ()
+  "Test `agent-shell-markdown--open-local-link' routes by file type.
+Text/navigable files open in Emacs; binary files open externally."
+  (let ((text (make-temp-file "agent-shell-ol-text" nil ".txt"))
+        (binary (make-temp-file "agent-shell-ol-bin" nil ".bin"))
+        (action nil))
+    (unwind-protect
+        (progn
+          (with-temp-file text (insert "hello"))
+          (let ((coding-system-for-write 'binary))
+            (with-temp-file binary (insert "x\0y")))
+          (cl-letf (((symbol-function 'find-file)
+                     (lambda (f) (setq action (cons 'find-file f))))
+                    ((symbol-function 'agent-shell-markdown--open-externally)
+                     (lambda (f) (setq action (cons 'external f)))))
+            ;; Text file -> find-file (navigable in Emacs).
+            (setq action nil)
+            (should (agent-shell-markdown--open-local-link (concat "file://" text)))
+            (should (equal action (cons 'find-file text)))
+            ;; Binary file -> open externally.
+            (setq action nil)
+            (should (agent-shell-markdown--open-local-link (concat "file://" binary)))
+            (should (equal action (cons 'external binary)))
+            ;; Binary file with a line number -> still external (line ignored).
+            (setq action nil)
+            (should (agent-shell-markdown--open-local-link (concat "file://" binary "#L10")))
+            (should (equal action (cons 'external binary)))))
+      (delete-file text)
+      (delete-file binary))))
+
 (provide 'agent-shell-markdown-tests)
 
 ;;; agent-shell-markdown-tests.el ends here

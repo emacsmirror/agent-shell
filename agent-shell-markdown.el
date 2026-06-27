@@ -2066,14 +2066,41 @@ is consulted for aliases before the `-mode' suffix is appended."
   (unless (agent-shell-markdown--open-local-link url)
     (browse-url url)))
 
+(defun agent-shell-markdown--open-externally (file)
+  "Prompt to open FILE with the operating system's default external program.
+Opens FILE only if the user confirms.  Uses `shell-command-do-open' on
+Emacs 31+, falling back to `browse-url-of-file' on earlier versions."
+  (when (y-or-n-p (format "Open %s externally? " (file-name-nondirectory file)))
+    (if (fboundp 'shell-command-do-open)
+        (shell-command-do-open (list file))
+      (browse-url-of-file file))))
+
+(defun agent-shell-markdown--binary-file-p (file)
+  "Return non-nil when FILE looks binary (a NUL byte in its first 4KB).
+This is the heuristic git uses to tell binary from text."
+  (and (file-readable-p file)
+       (with-temp-buffer
+         (set-buffer-multibyte nil)
+         (insert-file-contents-literally file nil 0 4096)
+         (string-search "\0" (buffer-string)))))
+
 (defun agent-shell-markdown--open-local-link (url)
   "Open URL as a local file link if possible.
-Return non-nil if handled, nil otherwise."
+Return non-nil if handled, nil otherwise.
+
+Text/navigable files open in Emacs, jumping to the `#Lnnn' line when URL
+carries one.  Binary files (which Emacs can't usefully display) instead
+prompt to open with the operating system's default program, ignoring any
+`#Lnnn' line (a line number is meaningless for binary)."
   (when-let* ((parsed (agent-shell-markdown--parse-local-link url)))
-    (find-file (car parsed))
-    (when (cdr parsed)
-      (goto-char (point-min))
-      (forward-line (1- (cdr parsed))))
+    (let ((file (car parsed))
+          (line (cdr parsed)))
+      (if (agent-shell-markdown--binary-file-p file)
+          (agent-shell-markdown--open-externally file)
+        (find-file file)
+        (when line
+          (goto-char (point-min))
+          (forward-line (1- line)))))
     t))
 
 (defun agent-shell-markdown--parse-local-link (url)
