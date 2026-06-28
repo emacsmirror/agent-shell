@@ -451,17 +451,34 @@ image-rendering path as `![alt](uri)'."
                                  (text . "line1\nline2")))))
                  "\n\n> line1\n> line2\n\n"))
 
-  ;; A binary (blob) embedded resource has no text -> placeholder (deferred).
-  (should (equal (agent-shell--content-block-to-markdown
-                  '((type . "resource")
-                    (resource . ((uri . "file:///tmp/x.bin") (blob . "AAAA")))))
-                 "[unsupported content: resource]"))
+  ;; An audio block -> a link labelled "audio (EXT)" to a decoded cache file
+  ;; (binary, opens externally when followed).
+  (let* ((wav "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=")
+         (markdown (agent-shell--content-block-to-markdown
+                    `((type . "audio") (mimeType . "audio/wav") (data . ,wav)))))
+    (should (string-prefix-p "\n\n[audio (wav)](" markdown))
+    (should (string-suffix-p ".wav)\n\n" markdown))
+    (should (string-match "](\\([^)]+\\))" markdown))
+    (should (file-exists-p (match-string 1 markdown)))
+    (delete-file (match-string 1 markdown)))
 
-  ;; Unhandled block type -> a visible placeholder (so lagging support is
-  ;; spottable), not a silent drop.
+  ;; An embedded binary (blob) resource -> a link to a decoded cache file,
+  ;; labelled by the resource's filename.
+  (let* ((blob "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=")
+         (markdown (agent-shell--content-block-to-markdown
+                    `((type . "resource")
+                      (resource . ((uri . "file:///tmp/report.pdf")
+                                   (mimeType . "application/pdf")
+                                   (blob . ,blob)))))))
+    (should (string-match "\\`\n\n\\[report.pdf\\](\\(/.*\\.pdf\\))\n\n\\'" markdown))
+    (should (file-exists-p (match-string 1 markdown)))
+    (delete-file (match-string 1 markdown)))
+
+  ;; A future/unknown block type -> a visible placeholder (so lagging support
+  ;; is spottable), not a silent drop.
   (should (equal (agent-shell--content-block-to-markdown
-                  '((type . "audio") (mimeType . "audio/wav")))
-                 "[unsupported content: audio]"))
+                  '((type . "video") (mimeType . "video/mp4")))
+                 "[unsupported content: video]"))
 
   ;; Image block carrying base64 `data' (the spec-required field, no uri) is
   ;; decoded to a cache file and referenced as a markdown image rather than
@@ -515,6 +532,35 @@ file name."
     ;; nothing is written outside the cache dir.
     (should-not (agent-shell--image-data-to-file png "image/../../../tmp/evil"))
     (should-not (agent-shell--image-data-to-file png "image/png ../evil"))))
+
+(ert-deftest agent-shell--content-extension-test ()
+  "Test `agent-shell--content-extension'."
+  (should (equal (agent-shell--content-extension "audio/wav") "wav"))
+  (should (equal (agent-shell--content-extension "application/pdf") "pdf"))
+  ;; Case-insensitive.
+  (should (equal (agent-shell--content-extension "IMAGE/PNG") "png"))
+  ;; Vendor/compound types don't reduce to a plain extension.
+  (should-not (agent-shell--content-extension "application/octet-stream"))
+  (should-not (agent-shell--content-extension "image/svg+xml"))
+  (should-not (agent-shell--content-extension nil)))
+
+(ert-deftest agent-shell--data-to-cache-file-test ()
+  "Test `agent-shell--data-to-cache-file'."
+  (let ((data "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII="))
+    ;; Valid data + extension -> a real file with that extension.
+    (let ((file (agent-shell--data-to-cache-file data "pdf")))
+      (should (stringp file))
+      (should (string-suffix-p ".pdf" file))
+      (should (file-exists-p file))
+      (delete-file file))
+
+    ;; Non-string data -> nil (nothing to write).
+    (should-not (agent-shell--data-to-cache-file nil "pdf"))
+
+    ;; SECURITY: an extension that isn't plain alphanumeric is rejected, so a
+    ;; crafted value can't inject a path or stray characters into the name.
+    (should-not (agent-shell--data-to-cache-file data "../evil"))
+    (should-not (agent-shell--data-to-cache-file data "tar.gz"))))
 
 (ert-deftest agent-shell--on-notification-agent-message-chunk-markdown-test ()
   "Test `agent_message_chunk' rendering wires through to markdown.

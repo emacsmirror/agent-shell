@@ -311,7 +311,7 @@ cache so downloaded images share `agent-shell--cache-dir'."
   (funcall agent-shell-markdown-render-function
            :render-images render-images
            :highlight-blocks highlight-blocks
-           :image-cache-directory (agent-shell--cache-dir "content-images")))
+           :image-cache-directory (agent-shell--cache-dir "content")))
 
 (defcustom agent-shell-confirm-interrupt t
   "Whether to prompt for confirmation before interrupting.
@@ -1906,22 +1906,24 @@ pretty-printed JSON inside a json fence."
              (agent-shell--append-transcript
               :text (format "## Agent's Thoughts (%s)\n\n" (format-time-string "%F %T"))
               :file-path agent-shell--transcript-file))
-           (agent-shell--append-transcript
-            :text (agent-shell--indent-markdown-headers
-                   (map-nested-elt acp-notification '(params update content text)))
-            :file-path agent-shell--transcript-file)
-           (agent-shell--update-fragment
-            :state state
-            :block-id (format "%s-agent_thought_chunk"
-                              (map-elt state :chunked-group-count))
-            :label-left  (concat
-                          agent-shell-thought-process-icon
-                          " "
-                          (propertize "Thinking" 'font-lock-face font-lock-doc-markup-face))
-            :body (map-nested-elt acp-notification '(params update content text))
-            :append (equal (map-elt state :last-entry-type)
-                           "agent_thought_chunk")
-            :expanded agent-shell-thought-process-expand-by-default)
+           (let ((content (agent-shell--content-block-to-markdown
+                            (map-nested-elt acp-notification '(params update content)))))
+             (agent-shell--append-transcript
+              :text (agent-shell--indent-markdown-headers content)
+              :file-path agent-shell--transcript-file)
+             (agent-shell--update-fragment
+              :state state
+              :block-id (format "%s-agent_thought_chunk"
+                                (map-elt state :chunked-group-count))
+              :label-left  (concat
+                            agent-shell-thought-process-icon
+                            " "
+                            (propertize "Thinking" 'font-lock-face font-lock-doc-markup-face))
+              :body content
+              :append (equal (map-elt state :last-entry-type)
+                             "agent_thought_chunk")
+              :expanded agent-shell-thought-process-expand-by-default
+              :render-body-images t))
            (map-put! state :last-entry-type "agent_thought_chunk"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "agent_message_chunk")
            (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
@@ -1933,16 +1935,16 @@ pretty-printed JSON inside a json fence."
            ;; below the transcript's ## section headers.  Applied
            ;; per-chunk: if a header is split across chunks it may
            ;; not be indented (graceful degradation).
-           (let ((chunk-md (agent-shell--content-block-to-markdown
-                            (map-nested-elt acp-notification '(params update content)))))
+           (let ((content (agent-shell--content-block-to-markdown
+                           (map-nested-elt acp-notification '(params update content)))))
              (agent-shell--append-transcript
-              :text (agent-shell--indent-markdown-headers chunk-md)
+              :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
              (agent-shell--update-fragment
               :state state
               :block-id (format "%s-agent_message_chunk"
                                 (map-elt state :chunked-group-count))
-              :body chunk-md
+              :body content
               :create-new (not (equal (map-elt state :last-entry-type)
                                       "agent_message_chunk"))
               :append t
@@ -2059,11 +2061,9 @@ pretty-printed JSON inside a json fence."
            (let* ((diff (map-nested-elt state `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :diff)))
                   (output (concat
                            "\n\n"
-                           ;; TODO: Consider if there are other
-                           ;; types of content to display.
-                           (mapconcat (lambda (item)
-                                        (map-nested-elt item '(content text)))
-                                      (map-nested-elt acp-notification '(params update content))
+                           (mapconcat #'agent-shell--content-block-to-markdown
+                                      (seq-keep (lambda (item) (map-elt item 'content))
+                                                (map-nested-elt acp-notification '(params update content)))
                                       "\n\n")
                            "\n\n"))
                   (diff-text (agent-shell--format-diff-as-text diff))
@@ -2870,11 +2870,11 @@ later removed from .gitignore it will not be re-added."
 
 For example:
 
-  (agent-shell--dot-subdir-in-repo-p \"/path/to/project/.agent-shell/screenshots\")
-  => t
+  (agent-shell--dot-subdir-in-repo-p
+    \"/path/to/project/.agent-shell/screenshots\") => t
 
-  (agent-shell--dot-subdir-in-repo-p \"/home/user/.emacs.d/agent-shell/project/screenshots\")
-  => nil"
+  (agent-shell--dot-subdir-in-repo-p
+   \"/home/user/.emacs.d/agent-shell/project/screenshots\") => nil"
   (file-in-directory-p dir
                        (file-name-as-directory
                         (expand-file-name ".agent-shell" (agent-shell-cwd)))))
@@ -4338,7 +4338,8 @@ INSTALL-INSTRUCTIONS is optional installation guidance."
 ON-EVENT is a function called with an event alist containing:
   :event - A symbol identifying the event
 
-When EVENT is non-nil, only events matching that symbol are dispatched.
+When EVENT is non-nil, only events matching that symbol are
+dispatched.
 When EVENT is nil, all events are dispatched.
 
 Initialization events (emitted in order):
@@ -4361,7 +4362,7 @@ Initialization events (emitted in order):
 Session events:
   `tool-call-update'      - Tool call started or updated
     :data contains :tool-call-id and :tool-call
-  `config-option-update'  - ACP config option(s) changed (e.g., by another client)
+  `config-option-update'  - ACP config option(s) changed
     :data contains :config-options (normalized list)
   `file-write'            - File written via fs/write_text_file
     :data contains :path and :content
@@ -5843,34 +5844,59 @@ If FILE-PATH is not an image, returns nil."
               (type-supported (image-supported-file-p file-path)))
     (create-image file-path nil nil :max-width max-width)))
 
-(defun agent-shell--image-data-to-file (data mime-type)
-  "Write base64-encoded image DATA of MIME-TYPE to a cache file.
+(defun agent-shell--data-to-cache-file (data extension)
+  "Decode base64 DATA to a cache file named by its md5 with EXTENSION.
 
-Returns the file path, or nil when DATA is missing or MIME-TYPE doesn't
-map to a known image extension.  The extension is validated against
-`image-file-name-extensions' rather than used verbatim, so an
-agent-supplied MIME-TYPE can't inject a path or stray characters into the
-file name.  The file is written regardless of whether this Emacs can
-inline-render the type, so the link remains openable.  The file name is
-otherwise derived from DATA's md5 so repeated chunks reuse the same file.
-
-Example:
-
-  (agent-shell--image-data-to-file \"iVBORw0KGgo...\" \"image/png\")
-  => \"/home/user/.cache/agent-shell/content-images/<md5>.png\""
+Returns the file path, or nil when DATA isn't a string or EXTENSION isn't a
+plain alphanumeric extension (so an agent-supplied value can't inject a path
+or stray characters into the file name).  The md5 name means identical
+payloads reuse the same file."
   (when-let* (((stringp data))
-              ((stringp mime-type))
-              (extension (pcase mime-type
-                           ("image/svg+xml" "svg")
-                           (_ (string-remove-prefix "image/" mime-type))))
-              ((seq-contains-p image-file-name-extensions extension))
+              ((stringp extension))
+              ((string-match-p "\\`[a-z0-9]+\\'" extension))
               (file (expand-file-name
                      (format "%s.%s" (md5 data) extension)
-                     (agent-shell--cache-dir "content-images"))))
+                     (agent-shell--cache-dir "content"))))
     (unless (file-exists-p file)
       (let ((coding-system-for-write 'binary))
         (write-region (base64-decode-string data) nil file nil 'silent)))
     file))
+
+(defun agent-shell--content-extension (mime-type)
+  "Return a plain file extension for MIME-TYPE, or nil.
+
+The extension is the segment after the last `/', lowercased, accepted only
+when it is plain alphanumeric -- so vendor/compound types (e.g.
+`application/octet-stream' or `image/svg+xml') return nil rather than an
+unusable extension.
+
+Examples:
+
+  (agent-shell--content-extension \"audio/wav\")            => \"wav\"
+  (agent-shell--content-extension \"application/pdf\")      => \"pdf\"
+  (agent-shell--content-extension \"application/octet-stream\") => nil"
+  (when (stringp mime-type)
+    (let ((tail (downcase (replace-regexp-in-string "\\`.*/" "" mime-type))))
+      (and (string-match-p "\\`[a-z0-9]+\\'" tail) tail))))
+
+(defun agent-shell--image-data-to-file (data mime-type)
+  "Write base64-encoded image DATA of MIME-TYPE to a cache file.
+
+Returns the file path, or nil when DATA is missing or MIME-TYPE doesn't map
+to a known image extension.  The extension is validated against
+`image-file-name-extensions'.  The file is written regardless of whether
+ Emacs can inline-render the type, so the link remains openable.
+
+Example:
+
+  (agent-shell--image-data-to-file \"iVBORw0KGgo...\" \"image/png\")
+  => \"/home/user/.cache/agent-shell/content/<md5>.png\""
+  (when-let* (((stringp mime-type))
+              (extension (pcase mime-type
+                           ("image/svg+xml" "svg")
+                           (_ (string-remove-prefix "image/" mime-type))))
+              ((seq-contains-p image-file-name-extensions extension)))
+    (agent-shell--data-to-cache-file data extension)))
 
 (defun agent-shell--content-block-to-markdown (acp-content-block)
   "Return markdown for a `session/update' ACP-CONTENT-BLOCK.
@@ -5892,9 +5918,14 @@ A `resource_link' block returns a markdown link (`name' as the label, `uri'
 as the target) so the renderer's link machinery makes it clickable.  An
 embedded `resource' block carrying text returns that text as a blockquote.
 
-Any other block type (audio, a binary `resource', or a future type we don't
-render yet) returns a \"[unsupported content: TYPE]\" placeholder, so
-unhandled content stays visible rather than being silently dropped.
+Binary payloads -- `audio', and an embedded `resource' carrying a `blob' --
+are decoded to a cache file and returned as a markdown link.  The cache file
+is binary, so the renderer opens it externally (with confirmation) when the
+link is followed.
+
+A future block type we don't render yet returns a \"[unsupported content:
+TYPE]\" placeholder, so unhandled content stays visible rather than being
+silently dropped.
 
 Examples:
 
@@ -5920,18 +5951,40 @@ Examples:
      (if-let* ((uri (map-elt acp-content-block 'uri)))
          (format "\n\n[%s](%s)\n\n" (or (map-elt acp-content-block 'name) uri) uri)
        (or (map-elt acp-content-block 'name) "")))
+    ("audio"
+     ;; Audio carries only base64 `data' (no uri) -> decode to a cache file
+     ;; and link it (labelled \"audio (EXT)\"); the link opens externally
+     ;; (binary) when clicked.
+     (if-let* ((extension (or (agent-shell--content-extension
+                               (map-elt acp-content-block 'mimeType))
+                              "bin"))
+               (file (agent-shell--data-to-cache-file
+                      (map-elt acp-content-block 'data) extension)))
+         (format "\n\n[audio (%s)](%s)\n\n" extension file)
+       ""))
     ("resource"
-     ;; Embedded text resource -> a blockquote so the content is set apart
-     ;; from the agent's prose rather than dropped.  A binary (blob) resource
-     ;; has no text and falls through to the placeholder.
      (if-let* ((text (map-nested-elt acp-content-block '(resource text))))
+         ;; Embedded text resource -> a blockquote so the content is set apart
+         ;; from the agent's prose rather than dropped.
          (concat "\n\n"
                  (mapconcat (lambda (line) (concat "> " line))
                             (split-string text "\n")
                             "\n")
                  "\n\n")
-       (format "[unsupported content: %s]"
-               (or (map-elt acp-content-block 'type) "resource"))))
+       ;; Embedded binary (blob) resource -> a link to a decoded cache file
+       ;; (opens externally when clicked); otherwise a placeholder.
+       (if-let* ((file (agent-shell--data-to-cache-file
+                        (map-nested-elt acp-content-block '(resource blob))
+                        (or (agent-shell--content-extension
+                             (map-nested-elt acp-content-block '(resource mimeType)))
+                            "bin"))))
+           (format "\n\n[%s](%s)\n\n"
+                   (if-let* ((uri (map-nested-elt acp-content-block '(resource uri))))
+                       (file-name-nondirectory uri)
+                     "resource")
+                   file)
+         (format "[unsupported content: %s]"
+                 (or (map-elt acp-content-block 'type) "resource")))))
     (type (format "[unsupported content: %s]" (or type "unknown")))))
 
 (cl-defun agent-shell--collect-attached-files (content-blocks)
