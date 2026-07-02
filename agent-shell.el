@@ -8286,13 +8286,14 @@ Returns the file path, or nil if disabled."
           (let ((agent-name (or (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))
                                 (map-nested-elt agent-shell--state '(:agent-config :buffer-name))
                                 "Unknown Agent"))
-                (session-id (map-nested-elt agent-shell--state '(:session :id))))
+                (session-id (map-nested-elt agent-shell--state '(:session :id)))
+                (model-id (map-nested-elt agent-shell--state '(:session :model-id))))
             (write-region
              (format "# Agent Shell Transcript
 
 **Agent:** %s
 **Started:** %s
-**Working Directory:** %s%s
+**Working Directory:** %s%s%s
 
 ---
 
@@ -8302,6 +8303,9 @@ Returns the file path, or nil if disabled."
                      (agent-shell-cwd)
                      (if session-id
                          (format "\n**Session ID:** %s" session-id)
+                       "")
+                     (if model-id
+                         (format "\n**Model:** %s" model-id)
                        ""))
              nil filepath nil 'no-message)
             (message "Created %s"
