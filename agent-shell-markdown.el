@@ -913,151 +913,154 @@ with `emacs-lisp-mode' face properties on the body and a
                        (backref 2)
                        (zero-or-more blank) (or "\n" eol)))
             nil t)
-      (let* ((open-start (match-beginning 1))
-             (open-end (match-end 1))
-             (lang (buffer-substring-no-properties (match-beginning 3)
-                                                   (match-end 3)))
-             (body-start (copy-marker (match-beginning 4)))
-             (body-end (copy-marker (match-end 4)))
-             (close-start (match-beginning 5))
-             (close-end (match-end 5))
-             (highlighted (when highlight-blocks
-                            (agent-shell-markdown--highlight-code
-                             (buffer-substring-no-properties body-start body-end)
-                             lang))))
-        ;; Delete in reverse position order so earlier offsets stay
-        ;; valid; body markers adjust automatically.
-        (delete-region close-start close-end)
-        (delete-region open-start open-end)
-        ;; Seed the bg panel on body chars first, then layer language
-        ;; font-lock faces on top — the foreground colors take priority
-        ;; per glyph while the `:extend t' background fills the gaps
-        ;; and reaches the right edge of the window.  Include the
-        ;; trailing `\\n' (the one that sat between body and close
-        ;; fence, preserved by the deletes above): `:extend t' only
-        ;; extends the background when the face is in effect at
-        ;; end-of-line, so without the `\\n' carrying the face the
-        ;; last body line's bg would stop at the last content char.
-        (let ((body-bg-end (min (1+ (marker-position body-end))
-                                (point-max)))
-              ;; `line-prefix' / `wrap-prefix' visually inset each
-              ;; rendered line: 2 plain cols then 2 bg-tinted cols.
-              ;; Copying chars out of the block yanks raw source with
-              ;; no leading indentation.  `wrap-prefix' handles long
-              ;; lines that wrap.  Splitting the prefix this way keeps
-              ;; the panel from running hard to the window's left edge
-              ;; while still drawing a clear tinted gutter.
-              (prefix (concat "  "
-                              (propertize
-                               "  " 'face
-                               'agent-shell-markdown-source-block))))
-          (put-text-property (marker-position body-start) body-bg-end
-                             'face 'agent-shell-markdown-source-block)
-          (agent-shell-markdown--apply-faces-from highlighted
-                                                  (marker-position body-start))
-          (add-text-properties (marker-position body-start) body-bg-end
-                               `(agent-shell-markdown-frozen t
-                                                             agent-shell-non-trimmable t
-                                                             rear-nonsticky (agent-shell-markdown-frozen
-                                                                             agent-shell-non-trimmable)
-                                                             line-prefix ,prefix
-                                                             wrap-prefix ,prefix))
-          ;; Insert an actionable "LANG ⧉" / "snippet ⧉" label and the
-          ;; surrounding panel padding as REAL BUFFER TEXT — no
-          ;; `display' properties (which previously caused the body's
-          ;; first char to be hidden / clipped, see #597 "Make code
-          ;; block label actual buffer text"), no overlays.  Layout
-          ;; relative to the original body: `<vpad>\\n<label>\\n\\n
-          ;; <body>\\n<vpad>\\n', where each padding `\\n' carries the
-          ;; panel bg face so its line renders as a tinted blank line.
-          ;; RET or mouse-1 on the label kills the body to the kill
-          ;; ring.  `content-start' uses insertion-type t so it stays
-          ;; AFTER the inserted prefix, giving the kill-action a
-          ;; stable pointer to body content even though `body-start'
-          ;; itself collapses to the leading vpad's first char.
-          ;; After insertion we carry the body's caller-set properties
-          ;; (`invisible', agent-shell-ui block/section markers,
-          ;; `read-only', etc.) onto the inserted chars — propertize'd
-          ;; inserts ignore stickiness, and without this the inserted
-          ;; prefix punches a hole in the caller's contiguous block
-          ;; range and breaks toggle/replace operations.
-          (let* ((label-text (concat (if (string-empty-p lang) "snippet" lang)
-                                     " ⧉"))
-                 (content-start (copy-marker (marker-position body-start) t))
-                 (kill-action (lambda ()
-                                (interactive)
-                                ;; Locate the body by text property in
-                                ;; the current buffer so copy works in
-                                ;; any buffer that received a propertized
-                                ;; copy of the rendered block (e.g. the
-                                ;; viewport).
-                                (when-let* ((start (next-single-property-change
-                                                    (point)
-                                                    'agent-shell-markdown-source-block-body))
-                                            ((get-text-property
-                                              start
-                                              'agent-shell-markdown-source-block-body))
-                                            (end (next-single-property-change
-                                                  start
-                                                  'agent-shell-markdown-source-block-body)))
-                                  (kill-new (buffer-substring-no-properties start end))
-                                  (message "Copied"))))
-                 (vpad-line (propertize "\n"
-                                        'face 'agent-shell-markdown-source-block
-                                        'line-prefix prefix
-                                        'wrap-prefix prefix
-                                        'agent-shell-non-trimmable t
-                                        'rear-nonsticky
-                                        '(agent-shell-non-trimmable)))
-                 (label (propertize
-                         label-text
-                         'face 'agent-shell-markdown-source-block-language
-                         'mouse-face 'highlight
-                         'pointer 'hand
-                         'keymap (agent-shell-markdown--make-ret-binding-map
-                                  kill-action)
-                         'cursor-sensor-functions
-                         (list (lambda (_window _old-pos sensor-action)
-                                 (when (eq sensor-action 'entered)
-                                   (message "Press RET to copy"))))
-                         'agent-shell-markdown-frozen t
-                         'rear-nonsticky '(agent-shell-markdown-frozen)
-                         'line-prefix prefix
-                         'wrap-prefix prefix))
-                 ;; Top vpad `\\n' + label + middle vpad `\\n' + a
-                 ;; second `\\n' that becomes the first column of the
-                 ;; line carrying body content.
-                 (header (concat vpad-line label vpad-line vpad-line))
-                 (carried (agent-shell-markdown--carry-properties body-start)))
-            (goto-char body-start)
-            (insert header)
-            (when carried
-              (add-text-properties (marker-position body-start)
-                                   (marker-position content-start)
-                                   carried))
-            ;; Tag body content so the label's copy action can locate
-            ;; it by text property, survives a propertized copy into
-            ;; another buffer (e.g. viewport).
-            (put-text-property (marker-position content-start)
-                               (marker-position body-end)
-                               'agent-shell-markdown-source-block-body t)
-            ;; Bottom vpad: insert a single tinted `\\n' AFTER the
-            ;; body's trailing newline so the panel ends on a blank
-            ;; tinted line below the last body line.  body-end
-            ;; (insertion-type nil) stays put across this insert; the
-            ;; vpad lives at [body-end, body-end+1) within the buffer.
-            (save-excursion
-              (when (and (< (marker-position body-end) (point-max))
-                         (eq (char-after (marker-position body-end)) ?\n))
-                (goto-char (1+ (marker-position body-end)))
-                (let ((vpad-start (point)))
-                  (insert vpad-line)
-                  (when carried
-                    (add-text-properties vpad-start (point) carried)))))
-            ;; Move point past the body so the outer `re-search-forward'
-            ;; loop doesn't backtrack into body content (e.g. shorter
-            ;; inner fences inside a wider outer fence).
-            (goto-char (marker-position body-end))))))))
+      ;; Honor `agent-shell-markdown-frozen'.
+      (unless (get-text-property (match-beginning 4)
+                                 'agent-shell-markdown-frozen)
+        (let* ((open-start (match-beginning 1))
+               (open-end (match-end 1))
+               (lang (buffer-substring-no-properties (match-beginning 3)
+                                                     (match-end 3)))
+               (body-start (copy-marker (match-beginning 4)))
+               (body-end (copy-marker (match-end 4)))
+               (close-start (match-beginning 5))
+               (close-end (match-end 5))
+               (highlighted (when highlight-blocks
+                              (agent-shell-markdown--highlight-code
+                               (buffer-substring-no-properties body-start body-end)
+                               lang))))
+          ;; Delete in reverse position order so earlier offsets stay
+          ;; valid; body markers adjust automatically.
+          (delete-region close-start close-end)
+          (delete-region open-start open-end)
+          ;; Seed the bg panel on body chars first, then layer language
+          ;; font-lock faces on top — the foreground colors take priority
+          ;; per glyph while the `:extend t' background fills the gaps
+          ;; and reaches the right edge of the window.  Include the
+          ;; trailing `\\n' (the one that sat between body and close
+          ;; fence, preserved by the deletes above): `:extend t' only
+          ;; extends the background when the face is in effect at
+          ;; end-of-line, so without the `\\n' carrying the face the
+          ;; last body line's bg would stop at the last content char.
+          (let ((body-bg-end (min (1+ (marker-position body-end))
+                                  (point-max)))
+                ;; `line-prefix' / `wrap-prefix' visually inset each
+                ;; rendered line: 2 plain cols then 2 bg-tinted cols.
+                ;; Copying chars out of the block yanks raw source with
+                ;; no leading indentation.  `wrap-prefix' handles long
+                ;; lines that wrap.  Splitting the prefix this way keeps
+                ;; the panel from running hard to the window's left edge
+                ;; while still drawing a clear tinted gutter.
+                (prefix (concat "  "
+                                (propertize
+                                 "  " 'face
+                                 'agent-shell-markdown-source-block))))
+            (put-text-property (marker-position body-start) body-bg-end
+                               'face 'agent-shell-markdown-source-block)
+            (agent-shell-markdown--apply-faces-from highlighted
+                                                    (marker-position body-start))
+            (add-text-properties (marker-position body-start) body-bg-end
+                                 `(agent-shell-markdown-frozen t
+                                                               agent-shell-non-trimmable t
+                                                               rear-nonsticky (agent-shell-markdown-frozen
+                                                                               agent-shell-non-trimmable)
+                                                               line-prefix ,prefix
+                                                               wrap-prefix ,prefix))
+            ;; Insert an actionable "LANG ⧉" / "snippet ⧉" label and the
+            ;; surrounding panel padding as REAL BUFFER TEXT — no
+            ;; `display' properties (which previously caused the body's
+            ;; first char to be hidden / clipped, see #597 "Make code
+            ;; block label actual buffer text"), no overlays.  Layout
+            ;; relative to the original body: `<vpad>\\n<label>\\n\\n
+            ;; <body>\\n<vpad>\\n', where each padding `\\n' carries the
+            ;; panel bg face so its line renders as a tinted blank line.
+            ;; RET or mouse-1 on the label kills the body to the kill
+            ;; ring.  `content-start' uses insertion-type t so it stays
+            ;; AFTER the inserted prefix, giving the kill-action a
+            ;; stable pointer to body content even though `body-start'
+            ;; itself collapses to the leading vpad's first char.
+            ;; After insertion we carry the body's caller-set properties
+            ;; (`invisible', agent-shell-ui block/section markers,
+            ;; `read-only', etc.) onto the inserted chars — propertize'd
+            ;; inserts ignore stickiness, and without this the inserted
+            ;; prefix punches a hole in the caller's contiguous block
+            ;; range and breaks toggle/replace operations.
+            (let* ((label-text (concat (if (string-empty-p lang) "snippet" lang)
+                                       " ⧉"))
+                   (content-start (copy-marker (marker-position body-start) t))
+                   (kill-action (lambda ()
+                                  (interactive)
+                                  ;; Locate the body by text property in
+                                  ;; the current buffer so copy works in
+                                  ;; any buffer that received a propertized
+                                  ;; copy of the rendered block (e.g. the
+                                  ;; viewport).
+                                  (when-let* ((start (next-single-property-change
+                                                      (point)
+                                                      'agent-shell-markdown-source-block-body))
+                                              ((get-text-property
+                                                start
+                                                'agent-shell-markdown-source-block-body))
+                                              (end (next-single-property-change
+                                                    start
+                                                    'agent-shell-markdown-source-block-body)))
+                                    (kill-new (buffer-substring-no-properties start end))
+                                    (message "Copied"))))
+                   (vpad-line (propertize "\n"
+                                          'face 'agent-shell-markdown-source-block
+                                          'line-prefix prefix
+                                          'wrap-prefix prefix
+                                          'agent-shell-non-trimmable t
+                                          'rear-nonsticky
+                                          '(agent-shell-non-trimmable)))
+                   (label (propertize
+                           label-text
+                           'face 'agent-shell-markdown-source-block-language
+                           'mouse-face 'highlight
+                           'pointer 'hand
+                           'keymap (agent-shell-markdown--make-ret-binding-map
+                                    kill-action)
+                           'cursor-sensor-functions
+                           (list (lambda (_window _old-pos sensor-action)
+                                   (when (eq sensor-action 'entered)
+                                     (message "Press RET to copy"))))
+                           'agent-shell-markdown-frozen t
+                           'rear-nonsticky '(agent-shell-markdown-frozen)
+                           'line-prefix prefix
+                           'wrap-prefix prefix))
+                   ;; Top vpad `\\n' + label + middle vpad `\\n' + a
+                   ;; second `\\n' that becomes the first column of the
+                   ;; line carrying body content.
+                   (header (concat vpad-line label vpad-line vpad-line))
+                   (carried (agent-shell-markdown--carry-properties body-start)))
+              (goto-char body-start)
+              (insert header)
+              (when carried
+                (add-text-properties (marker-position body-start)
+                                     (marker-position content-start)
+                                     carried))
+              ;; Tag body content so the label's copy action can locate
+              ;; it by text property, survives a propertized copy into
+              ;; another buffer (e.g. viewport).
+              (put-text-property (marker-position content-start)
+                                 (marker-position body-end)
+                                 'agent-shell-markdown-source-block-body t)
+              ;; Bottom vpad: insert a single tinted `\\n' AFTER the
+              ;; body's trailing newline so the panel ends on a blank
+              ;; tinted line below the last body line.  body-end
+              ;; (insertion-type nil) stays put across this insert; the
+              ;; vpad lives at [body-end, body-end+1) within the buffer.
+              (save-excursion
+                (when (and (< (marker-position body-end) (point-max))
+                           (eq (char-after (marker-position body-end)) ?\n))
+                  (goto-char (1+ (marker-position body-end)))
+                  (let ((vpad-start (point)))
+                    (insert vpad-line)
+                    (when carried
+                      (add-text-properties vpad-start (point) carried)))))
+              ;; Move point past the body so the outer `re-search-forward'
+              ;; loop doesn't backtrack into body content (e.g. shorter
+              ;; inner fences inside a wider outer fence).
+              (goto-char (marker-position body-end)))))))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start
