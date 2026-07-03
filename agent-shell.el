@@ -307,11 +307,11 @@ sites can omit it; RENDER-IMAGES defaults to t, override with nil
 on label spans where images shouldn't appear.
 
 Passes agent-shell's own cache directory as the renderer's remote-image
-cache so downloaded images share `agent-shell--cache-dir'."
+cache so downloaded images share `agent-shell-cache-dir'."
   (funcall agent-shell-markdown-render-function
            :render-images render-images
            :highlight-blocks highlight-blocks
-           :image-cache-directory (agent-shell--cache-dir "content")))
+           :image-cache-directory (agent-shell-cache-dir "content")))
 
 (defcustom agent-shell-confirm-interrupt t
   "Whether to prompt for confirmation before interrupting.
@@ -2511,11 +2511,13 @@ function before returning."
   "Resolve PATH using `agent-shell-path-resolver-function'."
   (funcall (or agent-shell-path-resolver-function #'identity) path))
 
-(defun agent-shell--cache-dir (&rest components)
-  "Determine and create a system-dependent agent-shell cache directory.
+(defun agent-shell-cache-dir (&rest components)
+  "Return the agent-shell cache directory, creating it if needed.
 
-Optionally, COMPONENTS specifies a subdirectory within the cache
-directory to be created."
+The base location is system-dependent and honors `XDG_CACHE_HOME'
+when set.  COMPONENTS, if given, name a subdirectory beneath the
+cache directory, which is created as well.  Return the absolute
+path of the resulting directory."
   (let* ((base (or (getenv "XDG_CACHE_HOME")
                    (pcase system-type
                      ('darwin (expand-file-name "Library/Caches" "~"))
@@ -4284,7 +4286,7 @@ Icon names starting with https:// are downloaded directly from that location."
                            url))
                        ;; For lobe-icons names, use the original filename
                        (file-name-nondirectory url)))
-           (cache-path (expand-file-name filename (agent-shell--cache-dir mode))))
+           (cache-path (expand-file-name filename (agent-shell-cache-dir mode))))
       (unless (file-exists-p cache-path)
         (let ((buffer (url-retrieve-synchronously url t t 5.0)))
           (when buffer
@@ -4307,7 +4309,7 @@ Return file path of the generated SVG."
     (let* ((icon-text (char-to-string (string-to-char icon-name)))
            (mode (if (eq (frame-parameter nil 'background-mode) 'dark) "dark" "light"))
            (filename (format "%s-%s.svg" icon-name width))
-           (cache-path (expand-file-name filename (agent-shell--cache-dir mode)))
+           (cache-path (expand-file-name filename (agent-shell-cache-dir mode)))
            (font-size (* 0.7 width))
            (x (/ width 2))
            (y (/ width 2)))
@@ -5933,7 +5935,7 @@ payloads reuse the same file."
               ((string-match-p "\\`[a-z0-9]+\\'" extension))
               (file (expand-file-name
                      (format "%s.%s" (md5 data) extension)
-                     (agent-shell--cache-dir "content"))))
+                     (agent-shell-cache-dir "content"))))
     (unless (file-exists-p file)
       (let ((coding-system-for-write 'binary))
         (write-region (base64-decode-string data) nil file nil 'silent)))

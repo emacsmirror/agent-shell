@@ -312,7 +312,7 @@ body un-fontified."
         (narrow-to-region watermark (point-max))
         (setq source-blocks (agent-shell-markdown--source-blocks))
         ;; The avoid ranges need to be of the form (start . end).
-        (setq source-ranges (agent-shell-markdown--sort-ranges
+        (setq source-ranges (agent-shell-markdown-sort-ranges
                              (mapcar (lambda (source-block)
                                        (cons (map-nested-elt source-block '(:block :start))
                                              (map-nested-elt source-block '(:block :end))))
@@ -336,7 +336,7 @@ body un-fontified."
                                   source-blocks inline-ranges)))
         (setq rendered-ranges (agent-shell-markdown--make-markers
                                (agent-shell-markdown--frozen-ranges)))
-        (setq avoid-ranges (agent-shell-markdown--sort-ranges
+        (setq avoid-ranges (agent-shell-markdown-sort-ranges
                             source-ranges rendered-ranges inline-ranges))
         (while (let ((italic-changed (agent-shell-markdown--replace-italics
                                       :avoid-ranges avoid-ranges))
@@ -434,7 +434,7 @@ world.\" with face `agent-shell-markdown-bold' on \"world\"."
             nil t)
       (let* ((markup-start (match-beginning 1))
              (markup-end (match-end 1))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
@@ -476,7 +476,7 @@ world.\" with face `agent-shell-markdown-italic' on \"world\"."
             nil t)
       (let* ((markup-start (or (match-beginning 1) (match-beginning 3)))
              (markup-end (or (match-end 1) (match-end 3)))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
@@ -510,7 +510,7 @@ For example, the buffer \"a ~~b~~ c\" becomes \"a b c\" with face
             nil t)
       (let* ((markup-start (match-beginning 0))
              (markup-end (match-end 0))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
@@ -549,7 +549,7 @@ with face `agent-shell-markdown-header-2' on \"My title\"."
             nil t)
       (let* ((markup-start (match-beginning 0))
              (markup-end (match-end 0))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
@@ -591,7 +591,7 @@ face `agent-shell-markdown-inline-code' on \"code\"."
     (while (re-search-forward "`\\([^`\n]+\\)`" nil t)
       (let* ((markup-start (match-beginning 0))
              (markup-end (match-end 0))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
@@ -631,7 +631,7 @@ and a keymap that opens the URL."
              (markup-end (match-end 0))
              (is-image (eq (char-before markup-start) ?!))
              (avoid (unless is-image
-                      (agent-shell-markdown--in-avoid-range-p
+                      (agent-shell-markdown-in-avoid-range-p
                        markup-start markup-end avoid-ranges))))
         (cond
          (avoid (goto-char (cdr avoid)))
@@ -684,7 +684,7 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
             nil t)
       (let* ((markup-start (match-beginning 0))
              (markup-end (match-end 0))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      markup-start markup-end avoid-ranges)))
         (cond
          (avoid (goto-char (cdr avoid)))
@@ -758,7 +758,7 @@ renders the image in place of that text."
     (while (re-search-forward regex nil t)
       (let* ((line-start (match-beginning 0))
              (line-end (match-end 0))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      line-start line-end avoid-ranges)))
         (cond
          (avoid (goto-char (cdr avoid)))
@@ -806,7 +806,7 @@ property, so the source markdown round-trips through copy/save."
             nil t)
       (let* ((rule-start (match-beginning 0))
              (rule-end (match-end 0))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      rule-start rule-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
@@ -850,7 +850,7 @@ left untouched."
             nil t)
       (let* ((line-start (match-beginning 0))
              (line-end (match-end 0))
-             (avoid (agent-shell-markdown--in-avoid-range-p
+             (avoid (agent-shell-markdown-in-avoid-range-p
                      line-start line-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
@@ -1145,7 +1145,7 @@ unchanged source is a no-op."
          ;; Query with `[pos, pos+1)' so a range whose half-open
          ;; exclusive END equals POS doesn't match (would otherwise
          ;; setq POS back to itself → infinite loop).
-         ((let ((avoid (agent-shell-markdown--in-avoid-range-p
+         ((let ((avoid (agent-shell-markdown-in-avoid-range-p
                         pos (1+ pos) avoid-ranges)))
             (when avoid (setq pos (cdr avoid)) t)))
          ((get-text-property pos 'agent-shell-markdown-table-source)
@@ -1176,7 +1176,7 @@ unchanged source is a no-op."
                             (looking-at agent-shell-markdown--table-line-regexp)
                             (not (get-text-property (point)
                                                     'agent-shell-markdown-frozen))
-                            (not (agent-shell-markdown--in-avoid-range-p
+                            (not (agent-shell-markdown-in-avoid-range-p
                                   (point) (line-end-position) avoid-ranges)))
                   (setq trailing-end (line-end-position))
                   (forward-line 1))))
@@ -1208,7 +1208,7 @@ unchanged source is a no-op."
                         (looking-at agent-shell-markdown--table-line-regexp)
                         (not (get-text-property (point)
                                                 'agent-shell-markdown-frozen))
-                        (not (agent-shell-markdown--in-avoid-range-p
+                        (not (agent-shell-markdown-in-avoid-range-p
                               (point) (line-end-position) avoid-ranges)))
               (setq table-end (line-end-position))
               (setq row-count (1+ row-count))
@@ -2488,26 +2488,26 @@ returns `((:start . 1) (:end . 5))'."
   (list (cons :start start)
         (cons :end end)))
 
-(defun agent-shell-markdown--sort-ranges (&rest range-collections)
+(defun agent-shell-markdown-sort-ranges (&rest range-collections)
   "Merge RANGE-COLLECTIONS into a vector sorted by start position.
-Each collection is a sequence of (BEG . END) cons cells — list or
-vector — so already-sorted vectors can be re-merged without first
-being flattened.  Endpoints may be integers or markers.  The
-returned vector enables O(log n) lookup via
-`agent-shell-markdown--in-avoid-range-p'."
+Each collection is a sequence of (BEG . END) cons cells (a list or
+a vector), so already-sorted vectors can be re-merged without
+first being flattened.  Endpoints may be integers or markers.
+Return a fresh vector of the cons cells sorted ascending by BEG,
+suitable for O(log n) lookup with
+`agent-shell-markdown-in-avoid-range-p'."
   (sort (apply #'vconcat range-collections)
         (lambda (a b) (< (car a) (car b)))))
 
-(defun agent-shell-markdown--in-avoid-range-p (start end avoid-ranges)
-  "Return the avoid-range fully containing START..END, or nil.
+(defun agent-shell-markdown-in-avoid-range-p (start end avoid-ranges)
+  "Return the range in AVOID-RANGES fully containing START..END, or nil.
 
-AVOID-RANGES is a vector of (BEG . END) cons cells sorted by BEG
-— produce one with `agent-shell-markdown--sort-ranges'.
+AVOID-RANGES is a vector of (BEG . END) cons cells sorted
+ascending by BEG, as produced by `agent-shell-markdown-sort-ranges'.
 Endpoints may be integers or markers.  Ranges are assumed
-non-overlapping (callers compose disjoint sources), so the first
-candidate found suffices to decide containment.  The returned
-range lets callers advance point past it instead of re-checking
-the same range on every match inside it."
+non-overlapping, so the first containing range is returned as its
+own (BEG . END) cons cell.  Callers can advance point past its END
+to avoid re-checking the same range on every match inside it."
   (when avoid-ranges
     (let ((lo 0)
           (hi (length avoid-ranges))
@@ -2650,7 +2650,7 @@ one range covering the body \"code\"."
               (open nil))
           (while (re-search-forward "`" line-end t)
             (let ((pos (match-beginning 0)))
-              (unless (agent-shell-markdown--in-avoid-range-p pos pos avoid-ranges)
+              (unless (agent-shell-markdown-in-avoid-range-p pos pos avoid-ranges)
                 (if open
                     (progn
                       (push (cons (1+ open) pos) ranges)
