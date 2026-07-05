@@ -972,6 +972,29 @@ With \\[universal-argument] \\[universal-argument] prefix ARG, prompt to pick an
    (t
     (agent-shell--dwim))))
 
+(defun agent-shell--display-and-insert-context (shell-buffer text)
+  "Display SHELL-BUFFER and insert TEXT into it.
+
+When SHELL-BUFFER uses the `prompt' session strategy and has no session id
+yet, defer displaying and inserting until the `session-selected' event;
+otherwise do so immediately.  TEXT may be nil, in which case nothing is
+inserted."
+  (if (and (eq (buffer-local-value 'agent-shell-session-strategy shell-buffer) 'prompt)
+           (not (map-nested-elt (buffer-local-value 'agent-shell--state shell-buffer)
+                                '(:session :id))))
+      (agent-shell-subscribe-to
+       :shell-buffer shell-buffer
+       :event 'session-selected
+       :on-event (lambda (_event)
+                   (agent-shell--display-buffer shell-buffer)
+                   (when text
+                     (agent-shell--insert-to-shell-buffer :text text
+                                                          :shell-buffer shell-buffer))))
+    (agent-shell--display-buffer shell-buffer)
+    (when text
+      (agent-shell--insert-to-shell-buffer :text text
+                                           :shell-buffer shell-buffer))))
+
 (cl-defun agent-shell--dwim (&key config new-shell switch-to-shell)
   "Start or reuse an agent shell with DWIM behavior.
 
@@ -1027,11 +1050,16 @@ handles viewport mode detection, existing shell reuse, and project context."
                (agent-shell--insert-to-shell-buffer :text text
                                                     :shell-buffer shell-buffer))))
           (new-shell
-           (agent-shell-start :config (or config
-                                          (agent-shell--auto-preferred-config)
-                                          (agent-shell-select-config
-                                           :prompt "Start new agent: ")
-                                          (error "No agent config found"))))
+           (let* ((shell-buffer (agent-shell--start
+                                 :config (or config
+                                             (agent-shell--auto-preferred-config)
+                                             (agent-shell-select-config
+                                              :prompt "Start new agent: ")
+                                             (error "No agent config found"))
+                                 :no-focus t
+                                 :new-session t))
+                  (text (agent-shell--context :shell-buffer shell-buffer)))
+             (agent-shell--display-and-insert-context shell-buffer text)))
           (t
            (if (derived-mode-p 'agent-shell-mode)
                (let* ((shell-buffer (agent-shell--shell-buffer :no-create t))
@@ -1042,22 +1070,7 @@ handles viewport mode detection, existing shell reuse, and project context."
                                                         :shell-buffer shell-buffer)))
              (let* ((shell-buffer (agent-shell--shell-buffer))
                     (text (agent-shell--context :shell-buffer shell-buffer)))
-               (if (and (eq (buffer-local-value 'agent-shell-session-strategy shell-buffer) 'prompt)
-                        (not (map-nested-elt (buffer-local-value 'agent-shell--state shell-buffer)
-                                             '(:session :id))))
-                   ;; Defer viewport display until session is selected.
-                   (agent-shell-subscribe-to
-                    :shell-buffer shell-buffer
-                    :event 'session-selected
-                    :on-event (lambda (_event)
-                                (agent-shell--display-buffer shell-buffer)
-                                (when text
-                                  (agent-shell--insert-to-shell-buffer :text text
-                                                                       :shell-buffer shell-buffer))))
-                 (agent-shell--display-buffer shell-buffer)
-                 (when text
-                   (agent-shell--insert-to-shell-buffer :text text
-                                                        :shell-buffer shell-buffer)))))))))
+               (agent-shell--display-and-insert-context shell-buffer text)))))))
 
 ;;;###autoload
 (defun agent-shell-toggle ()
@@ -3974,6 +3987,7 @@ When provided, included in help-echo tooltips."
                                                                                  (propertize model-binding 'face 'help-key-binding)))
                                                             'mouse-face 'mode-line-highlight
                                                             'local-map (let ((map (make-sparse-keymap)))
+                                                                         (define-key map [header-line down-mouse-1] #'ignore)
                                                                          (define-key map [header-line mouse-1]
                                                                                      (agent-shell--mode-line-model-menu))
                                                                          map)))
@@ -3986,6 +4000,7 @@ When provided, included in help-echo tooltips."
                                                                                  (propertize thought-level-binding 'face 'help-key-binding)))
                                                             'mouse-face 'mode-line-highlight
                                                             'local-map (let ((map (make-sparse-keymap)))
+                                                                         (define-key map [header-line down-mouse-1] #'ignore)
                                                                          (define-key map [header-line mouse-1]
                                                                                      (agent-shell--mode-line-thought-level-menu))
                                                                          map)))
@@ -3998,6 +4013,7 @@ When provided, included in help-echo tooltips."
                                                                                  (propertize mode-binding 'face 'help-key-binding)))
                                                             'mouse-face 'mode-line-highlight
                                                             'local-map (let ((map (make-sparse-keymap)))
+                                                                         (define-key map [header-line down-mouse-1] #'ignore)
                                                                          (define-key map [header-line mouse-1]
                                                                                      (agent-shell--mode-line-mode-menu))
                                                                          map)))
@@ -4229,6 +4245,7 @@ When provided, included in help-echo tooltips."
                                   'help-echo "Click to open settings menu"
                                   'mouse-face 'mode-line-highlight
                                   'local-map (let ((map (make-sparse-keymap)))
+                                               (define-key map [header-line down-mouse-1] #'ignore)
                                                (define-key map [header-line mouse-1]
                                                            (agent-shell--mode-line-combined-menu))
                                                map))))
@@ -7345,22 +7362,22 @@ With \\[universal-argument] prefix ARG, force start a new shell.
 
 With \\[universal-argument] \\[universal-argument] prefix ARG, prompt to pick an existing shell."
   (interactive "P")
-  (let* ((shell-buffer
-          (cond
-           ((equal arg '(16))
-            (agent-shell--dwim :switch-to-shell t)
-            (agent-shell--shell-buffer))
-           ((equal arg '(4))
-            (agent-shell--dwim :new-shell t)
-            (agent-shell--shell-buffer))
-           (t
-            (agent-shell--shell-buffer))))
-         (text (agent-shell--context :shell-buffer shell-buffer)))
-    (if (with-current-buffer shell-buffer (shell-maker-busy))
-        (with-current-buffer shell-buffer
-          (agent-shell-queue-request
-           (agent-shell--read-queue-prompt :initial (concat text "\n\n"))))
-      (agent-shell-insert :text text :shell-buffer shell-buffer))))
+  (cond
+   ;; `agent-shell--dwim' already carries the context to the chosen shell
+   ;; (deferring until the session is selected when needed), so let it own
+   ;; the send rather than inserting a second time here.
+   ((equal arg '(16))
+    (agent-shell--dwim :switch-to-shell t))
+   ((equal arg '(4))
+    (agent-shell--dwim :new-shell t))
+   (t
+    (let* ((shell-buffer (agent-shell--shell-buffer))
+           (text (agent-shell--context :shell-buffer shell-buffer)))
+      (if (with-current-buffer shell-buffer (shell-maker-busy))
+          (with-current-buffer shell-buffer
+            (agent-shell-queue-request
+             (agent-shell--read-queue-prompt :initial (concat text "\n\n"))))
+        (agent-shell-insert :text text :shell-buffer shell-buffer))))))
 
 (cl-defun agent-shell--get-region-context (&key deactivate no-error agent-cwd)
   "Get region as insertable text, ready for sending to agent.
@@ -7418,7 +7435,8 @@ Uses AGENT-CWD to shorten file paths where necessary."
                                             (max-preview-lines 5))
                                         (if (= (count-lines char-start char-end) 1)
                                             ;; Same line region? Avoid numbering.
-                                            (buffer-substring char-start char-end)
+                                            (agent-shell--buffer-substring-with-faces
+                                             char-start char-end)
                                           (agent-shell--get-numbered-region
                                            :buffer buffer
                                            :from char-start
@@ -7429,6 +7447,23 @@ Uses AGENT-CWD to shorten file paths where necessary."
                                  file-link))
                            (map-elt region :content))))
     processed-text))
+
+(defun agent-shell--buffer-substring-with-faces (start end)
+  "Return text between START and END, preserving only face properties."
+  (let ((text (buffer-substring start end))
+        (pos 0))
+    (while (< pos (length text))
+      (let ((next (or (next-property-change pos text) (length text)))
+            (props (text-properties-at pos text))
+            remove-props)
+        (while props
+          (unless (memq (car props) '(face font-lock-face))
+            (setq remove-props (plist-put remove-props (car props) nil)))
+          (setq props (cddr props)))
+        (when remove-props
+          (remove-text-properties pos next remove-props text))
+        (setq pos next)))
+    text))
 
 (cl-defun agent-shell--get-numbered-region (&key buffer from to cap trim)
   "Get region from BUFFER between FROM and TO locations.
@@ -7452,10 +7487,10 @@ If CAP is non-nil, truncate at CAP."
         (goto-char (point-min))
         (forward-line (1- start-line))
         (while (<= current-line end-line)
-          (let ((line-content (buffer-substring
+          (let ((line-content (agent-shell--buffer-substring-with-faces
                                (line-beginning-position)
                                (line-end-position))))
-            (push (format "   %d: %s" current-line line-content)
+            (push (concat (format "   %d: " current-line) line-content)
                   lines))
           (forward-line 1)
           (setq current-line (1+ current-line)))

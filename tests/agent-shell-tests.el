@@ -709,6 +709,77 @@ baz
                     :to to)
                    "   2: bar")))))
 
+(ert-deftest agent-shell--get-region-context-preserves-source-faces-only ()
+  "Region context must keep faces but not source control properties.
+
+A markdown-mode source buffer fonts emphasis markup (e.g. underscores)
+with `invisible' and `face' properties.  When a single-line region is
+grabbed for the file-link preview, source control properties must not
+leak into the context, otherwise the compose buffer may hide literal
+text.  Face properties are intentionally preserved for syntax
+highlighting."
+  (let* ((temp-file (make-temp-file "agent-shell-region" nil ".txt"))
+         (default-directory (file-name-directory temp-file)))
+    (unwind-protect
+        (progn
+          (with-temp-file temp-file
+            (insert "_hello_world_"))
+          (with-current-buffer (find-file-noselect temp-file)
+            ;; Simulate markdown-mode font-lock properties on the
+            ;; underscores, as a real markdown/poly-markdown buffer
+            ;; would carry.
+            (put-text-property (point-min) (point-max)
+                               'face 'markdown-markup-face)
+            (put-text-property (point-min) (point-max)
+                               'font-lock-face 'font-lock-string-face)
+            (goto-char (point-min))
+            (while (search-forward "_" nil t)
+              (put-text-property (1- (point)) (point)
+                                 'invisible 'markdown-markup))
+            (goto-char (point-min))
+            (set-mark (point-max))
+            (activate-mark)
+            (let ((ctx (agent-shell--get-region-context :deactivate t)))
+              (should-not (text-property-any 0 (length ctx)
+                                             'invisible 'markdown-markup ctx))
+              (should (text-property-any 0 (length ctx)
+                                         'face 'markdown-markup-face ctx))
+              (should (text-property-any 0 (length ctx)
+                                         'font-lock-face
+                                         'font-lock-string-face ctx)))))
+      (when (get-file-buffer temp-file)
+        (with-current-buffer (get-file-buffer temp-file)
+          (set-buffer-modified-p nil)))
+      (ignore-errors (delete-file temp-file)))))
+
+(ert-deftest agent-shell--get-numbered-region-preserves-source-faces-only ()
+  "Numbered region preview must keep faces but not source control properties.
+
+A multi-line region spanning lines that carry foreign properties (e.g.
+markdown-mode's `invisible' on emphasis markup) must drop control
+properties so the compose buffer shows literal source text.  Face
+properties are intentionally preserved for syntax highlighting."
+  (with-temp-buffer
+    (insert "_hello_
+_world_")
+    (put-text-property (point-min) (point-max) 'face 'markdown-markup-face)
+    (put-text-property (point-min) (point-max)
+                       'font-lock-face 'font-lock-string-face)
+    (goto-char (point-min))
+    (while (search-forward "_" nil t)
+      (put-text-property (1- (point)) (point) 'invisible 'markdown-markup))
+    (let ((result (agent-shell--get-numbered-region
+                   :buffer (current-buffer)
+                   :from (point-min)
+                   :to (point-max))))
+      (should-not (text-property-any 0 (length result)
+                                     'invisible 'markdown-markup result))
+      (should (text-property-any 0 (length result)
+                                 'face 'markdown-markup-face result))
+      (should (text-property-any 0 (length result)
+                                 'font-lock-face
+                                 'font-lock-string-face result)))))
+
 (ert-deftest agent-shell--expand-truncated-regions-test ()
   "Test `agent-shell--expand-truncated-regions' substitutes marked spans for their full text."
   ;; No marked regions: prompt unchanged.
@@ -2013,6 +2084,67 @@ remaining subscribers nor propagate out of `agent-shell--emit-event'."
                                "context from source"))))
           (kill-buffer shell-buffer))))))
 
+
+(ert-deftest agent-shell-send-dwim-with-prefix-appends-context-once-test ()
+  "Test `agent-shell-send-dwim' with a prefix arg appends context once.
+
+With \\[universal-argument] \\[universal-argument], the command picks an
+existing shell via `agent-shell--dwim' and must append the DWIM context to
+the viewport exactly once.  `agent-shell--dwim' already performs the append,
+so the command must not append a second time."
+  (let ((agent-shell-prefer-viewport-interaction t))
+    (with-temp-buffer
+      (let ((source-buffer (current-buffer))
+            (shell-buffer (generate-new-buffer " *agent-shell shell*"))
+            (appends nil))
+        (unwind-protect
+            (progn
+              (with-current-buffer shell-buffer
+                (setq-local agent-shell-session-strategy 'reuse)
+                (setq-local agent-shell--state
+                            `((:buffer . ,shell-buffer)
+                              (:session . ((:id . "session-1"))))))
+              (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                         (lambda (&rest _) shell-buffer))
+                        ((symbol-function 'agent-shell--read-shell-buffer)
+                         (lambda (&rest _) shell-buffer))
+                        ((symbol-function 'agent-shell--context)
+                         (lambda (&key shell-buffer)
+                           (ignore shell-buffer)
+                           "context from source"))
+                        ((symbol-function 'shell-maker-busy)
+                         (lambda (&rest _) nil))
+                        ((symbol-function 'agent-shell-viewport--show-buffer)
+                         (lambda (&rest args)
+                           (push (plist-get args :append) appends))))
+                (with-current-buffer source-buffer
+                  (agent-shell-send-dwim '(16)))
+                (should (equal appends '("context from source")))))
+          (kill-buffer shell-buffer))))))
+
+(ert-deftest agent-shell-send-dwim-without-prefix-appends-context-once-test ()
+  "Test `agent-shell-send-dwim' without a prefix arg appends context once."
+  (let ((agent-shell-prefer-viewport-interaction t))
+    (with-temp-buffer
+      (let ((source-buffer (current-buffer))
+            (shell-buffer (generate-new-buffer " *agent-shell shell*"))
+            (appends nil))
+        (unwind-protect
+            (cl-letf (((symbol-function 'agent-shell--shell-buffer)
+                       (lambda (&rest _) shell-buffer))
+                      ((symbol-function 'agent-shell--context)
+                       (lambda (&key shell-buffer)
+                         (ignore shell-buffer)
+                         "context from source"))
+                      ((symbol-function 'shell-maker-busy)
+                       (lambda (&rest _) nil))
+                      ((symbol-function 'agent-shell-viewport--show-buffer)
+                       (lambda (&rest args)
+                         (push (plist-get args :append) appends))))
+              (with-current-buffer source-buffer
+                (agent-shell-send-dwim))
+              (should (equal appends '("context from source"))))
+          (kill-buffer shell-buffer))))))
 (ert-deftest agent-shell--on-request-emits-permission-request-event-test ()
   "Test `agent-shell--on-request' emits permission-request event."
   (let ((received-events nil)
