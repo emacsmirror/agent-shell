@@ -1414,47 +1414,72 @@ Includes shells accessed via viewport buffers, preserving visited order."
     (nreverse shell-buffers)))
 
 (defun agent-shell-other-buffer ()
-  "Switch to other associated buffer (viewport vs shell)."
+  "Switch to other associated buffer (viewport vs shell).
+
+When switching between a viewport view and its shell, point is carried to
+the equivalent location: the same interaction and the same offset within
+its prompt or response.  From the shell's live prompt, switch to the
+viewport's compose buffer instead (carrying an unsent draft, or empty)."
   (declare (modes agent-shell-mode
                   agent-shell-viewport-view-mode
                   agent-shell-viewport-edit-mode))
   (interactive)
-  (cond ((or (derived-mode-p 'agent-shell-viewport-view-mode)
-             (derived-mode-p 'agent-shell-viewport-edit-mode))
-         (let* ((shell-buffer (agent-shell--shell-buffer
-                               :viewport-buffer (current-buffer)
-                               :no-create t))
-                ;; Capture position before switching so the
-                ;; shell window lands on that interaction rather than on its
-                ;; own remembered point.
-                (pos (when (and shell-buffer
-                                (derived-mode-p 'agent-shell-viewport-view-mode))
-                       (with-current-buffer shell-buffer (point)))))
-           (switch-to-buffer (or shell-buffer "No shell available"))
-           (when pos
-             (goto-char pos))))
-        ((derived-mode-p 'agent-shell-mode)
-         (if (and (shell-maker-point-at-last-prompt-p)
-                  (agent-shell--input))
-             ;; Point sits on the live prompt with an unsent draft.  Carry
-             ;; it into the viewport's edit buffer instead of showing a
-             ;; past interaction in view mode.
-             (agent-shell-prompt-compose)
-           (when-let* ((viewport-buffer (or (agent-shell-viewport--buffer
-                                             :shell-buffer (current-buffer))
-                                            "Not in a shell viewport buffer")))
-             ;; On the empty live prompt, `agent-shell-interaction-at-point'
-             ;; resolves to the interaction before the latest.  Move to the
-             ;; last interaction so the viewport shows (and pages relative
-             ;; to) the latest completed one.
-             (when (shell-maker-point-at-last-prompt-p)
-               (agent-shell-goto-last-interaction))
-             (with-current-buffer viewport-buffer
-               (when (derived-mode-p 'agent-shell-viewport-view-mode)
-                 (agent-shell-viewport-refresh)))
-             (switch-to-buffer viewport-buffer))))
-        (t
-         (user-error "Not in an agent-shell buffer"))))
+  (cond
+   ;; Viewport view -> shell.  The shell buffer's point already tracks the
+   ;; shown interaction; capture it and point's response offset before
+   ;; switching, since switching restores the shell window's own point.
+   ((derived-mode-p 'agent-shell-viewport-view-mode)
+    (let* ((shell-buffer (or (agent-shell--shell-buffer
+                              :viewport-buffer (current-buffer)
+                              :no-create t)
+                             (user-error "No shell available")))
+           (location (agent-shell--point-location
+                      (agent-shell-viewport--prompt-start)
+                      (agent-shell-viewport--response-start)))
+           (pos (with-current-buffer shell-buffer (point))))
+      (switch-to-buffer shell-buffer)
+      (goto-char pos)
+      (when-let* ((location)
+                  (start (if (eq (map-elt location :region) :response)
+                             (agent-shell--shell-response-start)
+                           (shell-maker--prompt-end-position))))
+        (goto-char (min (+ start (map-elt location :offset)) (point-max))))))
+   ;; Viewport edit -> shell.  No corresponding interaction, just switch.
+   ((derived-mode-p 'agent-shell-viewport-edit-mode)
+    (switch-to-buffer (or (agent-shell--shell-buffer
+                           :viewport-buffer (current-buffer)
+                           :no-create t)
+                          (user-error "No shell available"))))
+   ;; Shell -> viewport.  A nil response start means point is on the live
+   ;; prompt (no completed interaction under it), so compose: carry an unsent
+   ;; draft into the edit buffer, or start an empty one.  Otherwise show the
+   ;; interaction under point, mapping the response offset 1:1 into the
+   ;; viewport.
+   ((derived-mode-p 'agent-shell-mode)
+    (if-let* ((response-start (agent-shell--shell-response-start)))
+        (let ((location (agent-shell--point-location
+                         (shell-maker--prompt-end-position)
+                         response-start))
+              (viewport-buffer (agent-shell-viewport--buffer :shell-buffer (current-buffer))))
+          (with-current-buffer viewport-buffer
+            ;; Show the interaction unless an in-progress compose draft would
+            ;; be lost; an empty edit buffer is switched to view.
+            (unless (and (derived-mode-p 'agent-shell-viewport-edit-mode)
+                         (> (buffer-size) 0))
+              (unless (derived-mode-p 'agent-shell-viewport-view-mode)
+                (agent-shell-viewport-view-mode))
+              (agent-shell-viewport-refresh)))
+          (switch-to-buffer viewport-buffer)
+          (when (derived-mode-p 'agent-shell-viewport-view-mode)
+            (goto-char (or (when-let* ((location)
+                                       (start (if (eq (map-elt location :region) :response)
+                                                  (agent-shell-viewport--response-start)
+                                                (agent-shell-viewport--prompt-start))))
+                             (min (+ start (map-elt location :offset)) (point-max)))
+                           (point-min)))))
+      (agent-shell-prompt-compose)))
+   (t
+    (user-error "Not in an agent-shell buffer"))))
 
 (cl-defun agent-shell--read-shell-buffer (&key prompt buffers)
   "Read an `agent-shell-mode' buffer via `completing-read'.
@@ -6556,6 +6581,34 @@ Returns a buffer object or nil."
     (with-current-buffer shell-buffer
       (goto-char comint-last-input-start))))
 
+(defun agent-shell--shell-response-start ()
+  "Return where the response of the interaction at point begins.
+Return nil when point is not on an interaction with a response.  The
+position sits right after the `<shell-maker-end-of-prompt>' delimiter, so
+it aligns with the start of the response text copied into the viewport."
+  (save-excursion
+    (when-let* ((begin (ignore-errors (shell-maker--prompt-begin-position))))
+      (goto-char begin)
+      (when (re-search-forward "<shell-maker-end-of-prompt>" nil t)
+        (point)))))
+
+(defun agent-shell--point-location (prompt-start response-start)
+  "Return point's location as an alist, or nil.
+The alist has :region (:prompt or :response) and :offset (point's distance
+from that region's start).  :region is :response when point is at or past
+RESPONSE-START, else :prompt when at or past PROMPT-START.  PROMPT-START and
+RESPONSE-START are buffer positions or nil.
+
+The prompt and response text is shared between a shell and its viewport, so
+a location captured in one maps 1:1 into the other.  For example, point 5
+characters into the response returns:
+
+  ((:region . :response) (:offset . 5))"
+  (cond ((and response-start (>= (point) response-start))
+         `((:region . :response) (:offset . ,(- (point) response-start))))
+        ((and prompt-start (>= (point) prompt-start))
+         `((:region . :prompt) (:offset . ,(- (point) prompt-start))))))
+
 (defun agent-shell-interaction-at-point ()
   "Return the interaction at point in the shell buffer.
 Result is of the form ((:prompt . PROMPT) (:response . RESPONSE))."
@@ -6596,17 +6649,20 @@ Example:
                              :no-create no-create))
 
 (defun agent-shell--input ()
-  "Return shell input (not yet submitted)."
-  (when-let* ((shell-buffer (agent-shell--shell-buffer))
-              (input (with-current-buffer shell-buffer
-                       ;; Based on `comint-kill-input'
-                       ;; to get latest input.
-                       (buffer-substring
-                        (or (marker-position comint-accum-marker)
-                            (process-mark (get-buffer-process (current-buffer))))
-                        (point-max)))))
-    (unless (string-empty-p (string-trim input))
-      input)))
+  "Return shell input (not yet submitted).
+Return nil while the shell is busy and the region past the process mark
+holds read-only agent-rendered output (e.g. a permission request) rather
+than editable user input."
+  (when-let* ((shell-buffer (agent-shell--shell-buffer)))
+    (with-current-buffer shell-buffer
+      ;; Based on `comint-kill-input' to get latest input.
+      (when-let* ((start (or (marker-position comint-accum-marker)
+                             (process-mark (get-buffer-process (current-buffer)))))
+                  (input (buffer-substring start (point-max)))
+                  ((not (string-empty-p (string-trim input))))
+                  ;; Editable input only; agent-rendered UI here is read-only.
+                  ((not (text-property-not-all start (point-max) 'read-only nil))))
+        input))))
 
 ;;; Shell
 
