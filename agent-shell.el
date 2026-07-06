@@ -1398,10 +1398,18 @@ Includes shells accessed via viewport buffers, preserving visited order."
   (interactive)
   (cond ((or (derived-mode-p 'agent-shell-viewport-view-mode)
              (derived-mode-p 'agent-shell-viewport-edit-mode))
-         (switch-to-buffer (or (agent-shell--shell-buffer
-                                :viewport-buffer (current-buffer)
-                                :no-create t)
-                               "No shell available")))
+         (let* ((shell-buffer (agent-shell--shell-buffer
+                               :viewport-buffer (current-buffer)
+                               :no-create t))
+                ;; Capture position before switching so the
+                ;; shell window lands on that interaction rather than on its
+                ;; own remembered point.
+                (pos (when (and shell-buffer
+                                (derived-mode-p 'agent-shell-viewport-view-mode))
+                       (with-current-buffer shell-buffer (point)))))
+           (switch-to-buffer (or shell-buffer "No shell available"))
+           (when pos
+             (goto-char pos))))
         ((derived-mode-p 'agent-shell-mode)
          (if (and (shell-maker-point-at-last-prompt-p)
                   (agent-shell--input))
