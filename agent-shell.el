@@ -137,6 +137,16 @@ When non-nil, tool use sections are expanded."
   :type 'boolean
   :group 'agent-shell)
 
+(defcustom agent-shell-tool-use-group-expand-by-default t
+  "Whether the \"Tool calls\" group header is expanded by default.
+
+When non-nil (the default), a run of consecutive tool calls shows its
+members.  When nil, the group starts collapsed, showing only the header
+with its aggregated status and completed/total count.  Individual members
+still follow `agent-shell-tool-use-expand-by-default'."
+  :type 'boolean
+  :group 'agent-shell)
+
 (defvar agent-shell-mode-hook nil
   "Hook run after an `agent-shell-mode' buffer is fully initialized.
 Runs after the buffer-local state has been set up, so it is safe to
@@ -919,6 +929,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :config-options nil)
         (cons :last-entry-type nil)
         (cons :chunked-group-count 0)
+        (cons :tool-call-group-count 0)
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
@@ -1990,6 +2001,88 @@ pretty-printed JSON inside a json fence."
               (json-pretty-print-buffer)
               (buffer-string)))))
 
+(defconst agent-shell--tool-call-group-label "Tool calls"
+  "Header label for a collapsible run of consecutive tool calls.")
+
+(defun agent-shell--tool-call-group-id (state tool-call-id)
+  "Return the group-id assigned to TOOL-CALL-ID, assigning one on first sight.
+
+Consecutive tool calls share a group; any other rendered entry between
+them (e.g. a streamed message) starts a fresh one.  The assignment is
+stored on the tool call and reused by later updates, so a completion
+arriving after an interleaving message keeps its original group.  Advances
+STATE's `:tool-call-group-count' on a new run, mirroring the
+`:chunked-group-count' pattern used for message/thought chunks."
+  (or (map-nested-elt state `(:tool-calls ,tool-call-id :group-id))
+      (progn
+        ;; Advance the run counter before formatting the id.
+        (unless (member (map-elt state :last-entry-type)
+                        '("tool_call" "tool_call_update"))
+          (map-put! state :tool-call-group-count
+                    (1+ (or (map-elt state :tool-call-group-count) 0))))
+        (let ((group-id (format "tool-calls-%s" (map-elt state :tool-call-group-count))))
+          (agent-shell--save-tool-call state tool-call-id (list (cons :group-id group-id)))
+          group-id))))
+
+(defconst agent-shell--tool-call-status-precedence
+  '("failed" "in_progress" "pending" "completed")
+  "Tool-call statuses from most to least severe, for group aggregation.
+A group header shows `completed' only when every member completed;
+otherwise the worst present status surfaces (one failure shows `failed').")
+
+(defun agent-shell--group-tool-statuses (state group-id)
+  "Return the statuses of all tool calls in STATE assigned to GROUP-ID.
+
+  (agent-shell--group-tool-statuses
+   \\='((:tool-calls . ((\"t1\" . ((:group-id . \"g\") (:status . \"completed\")))
+                      (\"t2\" . ((:group-id . \"g\") (:status . \"failed\"))))))
+   \"g\")
+  ;; => (\"completed\" \"failed\")"
+  (seq-keep (lambda (pair)
+              (when (equal (map-elt (cdr pair) :group-id) group-id)
+                (map-elt (cdr pair) :status)))
+            (map-elt state :tool-calls)))
+
+(defun agent-shell--tool-call-group-status-glyph (status)
+  "Return a propertized status icon for a group header, or nil for no STATUS."
+  (when-let* ((config (and status (agent-shell--status-config status))))
+    (propertize (map-elt config :icon)
+                'font-lock-face (map-elt config :face))))
+
+(defun agent-shell--tool-call-group-header-label (statuses)
+  "Return the header label for a tool-call group with member STATUSES.
+
+Formats as `<glyph> Tool calls completed/total': the glyph is the dominant
+status (the first of `agent-shell--tool-call-status-precedence' present,
+so `completed' shows only when every member completed), and the count is
+how many members completed out of the total, so a non-completed member
+counts toward the total but not the numerator.
+
+  (agent-shell--tool-call-group-header-label \\='(\"completed\" \"completed\"))
+  ;; => \"✓ Tool calls 2/2\"
+  (agent-shell--tool-call-group-header-label \\='(\"completed\" \"failed\"))
+  ;; => \"✗ Tool calls 1/2\""
+  (let ((glyph (agent-shell--tool-call-group-status-glyph
+                (seq-find (lambda (status) (member status statuses))
+                          agent-shell--tool-call-status-precedence)))
+        (heading (propertize agent-shell--tool-call-group-label
+                             'font-lock-face 'agent-shell-section-heading))
+        (count (propertize
+                (format "%d/%d"
+                        (seq-count (lambda (status) (equal status "completed")) statuses)
+                        (length statuses))
+                'font-lock-face 'agent-shell-section-annotation)))
+    (string-join (delq nil (list glyph heading count)) " ")))
+
+(defun agent-shell--refresh-tool-call-group-header (state group-id)
+  "Relabel GROUP-ID's header in STATE from its members' aggregated status.
+No-op with no members yet."
+  (when-let* ((statuses (agent-shell--group-tool-statuses state group-id)))
+    (agent-shell--update-fragment
+     :state state
+     :block-id group-id
+     :label-left (agent-shell--tool-call-group-header-label statuses))))
+
 (cl-defun agent-shell--on-notification (&key state acp-notification)
   "Handle incoming ACP-NOTIFICATION using STATE."
   (map-put! state :last-activity-time (current-time))
@@ -2091,13 +2184,19 @@ pretty-printed JSON inside a json fence."
             :data (list (cons :tool-call-id (map-nested-elt acp-notification '(params update toolCallId)))
                         (cons :tool-call (map-nested-elt state (list :tool-calls (map-nested-elt acp-notification '(params update toolCallId)))))))
            (let ((tool-call-labels (agent-shell-make-tool-call-label
-                                    state (map-nested-elt acp-notification '(params update toolCallId)))))
+                                    state (map-nested-elt acp-notification '(params update toolCallId))))
+                 (group-id (agent-shell--tool-call-group-id
+                            state (map-nested-elt acp-notification '(params update toolCallId)))))
              (agent-shell--update-fragment
               :state state
               :block-id (map-nested-elt acp-notification '(params update toolCallId))
               :label-left (map-elt tool-call-labels :status)
               :label-right (map-elt tool-call-labels :title)
+              :group-id group-id
+              :group-label agent-shell--tool-call-group-label
+              :group-expanded agent-shell-tool-use-group-expand-by-default
               :expanded agent-shell-tool-use-expand-by-default)
+             (agent-shell--refresh-tool-call-group-header state group-id)
              ;; Display plan as markdown block if present
              (when (map-nested-elt acp-notification '(params update rawInput plan))
                (agent-shell--update-fragment
@@ -2276,6 +2375,8 @@ pretty-printed JSON inside a json fence."
                ;; agent-shell--update-fragment param by "session/request_permission".
                (agent-shell--delete-fragment :state state :block-id (format "permission-%s" (map-nested-elt acp-notification '(params update toolCallId)))))
              (let* ((tool-call-labels (agent-shell-make-tool-call-label state (map-nested-elt acp-notification '(params update toolCallId))))
+                    (group-id (agent-shell--tool-call-group-id
+                               state (map-nested-elt acp-notification '(params update toolCallId))))
                     (tool-call-id (map-nested-elt acp-notification '(params update toolCallId)))
                     (saved-command (map-nested-elt state `(:tool-calls ,tool-call-id :command)))
                     ;; Prepend fenced command to body for Bash-like
@@ -2300,6 +2401,9 @@ pretty-printed JSON inside a json fence."
                 :block-id (map-nested-elt acp-notification '(params update toolCallId))
                 :label-left (map-elt tool-call-labels :status)
                 :label-right (map-elt tool-call-labels :title)
+                :group-id group-id
+                :group-label agent-shell--tool-call-group-label
+                :group-expanded agent-shell-tool-use-group-expand-by-default
                 :body (cond
                        (command-block
                         (concat command-block "\n\n" (string-trim body-text)))
@@ -2307,7 +2411,8 @@ pretty-printed JSON inside a json fence."
                         (concat input-block "\n\n" (string-trim body-text)))
                        (t
                         (string-trim body-text)))
-                :expanded agent-shell-tool-use-expand-by-default)))
+                :expanded agent-shell-tool-use-expand-by-default)
+               (agent-shell--refresh-tool-call-group-header state group-id)))
            (map-put! state :last-entry-type "tool_call_update"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "available_commands_update")
            (map-put! state :available-commands (map-nested-elt acp-notification '(params update availableCommands)))
@@ -3740,7 +3845,8 @@ prompt).  Output carries a `field' of `output'; typed input does not."
 
 (cl-defun agent-shell--update-fragment (&key state namespace-id block-id label-left label-right
                                              body append create-new navigation expanded
-                                             render-body-images above-last-prompt)
+                                             render-body-images above-last-prompt
+                                             group-id group-label (group-expanded t))
   "Update fragment in the shell buffer.
 
 Creates or updates existing dialog using STATE's request count as namespace
@@ -3755,7 +3861,11 @@ NAVIGATION for navigation style, EXPANDED to show block expanded
 by default, RENDER-BODY-IMAGES to enable inline image rendering in
 body, ABOVE-LAST-PROMPT to land content above the active prompt
 instead of after it (typical for notifications arriving out of
-turn).  Programmatic fragment updates do not enter undo history."
+turn).  Programmatic fragment updates do not enter undo history.
+
+GROUP-ID nests this block under a collapsible group header, materialized
+from GROUP-LABEL on first use (see `agent-shell-ui-make-fragment-model'),
+with GROUP-EXPANDED as the group's initial fold state."
   (when label-right
     (setq label-right (string-trim label-right)))
   ;; Convert non-standard multiline single-backtick code spans to fenced
@@ -3793,7 +3903,10 @@ turn).  Programmatic fragment updates do not enter undo history."
                              :block-id block-id
                              :label-left label-left
                              :label-right label-right
-                             :body body)
+                             :body body
+                             :group-id group-id
+                             :group-label group-label
+                             :group-expanded group-expanded)
                             :navigation navigation
                             :append append
                             :create-new create-new
@@ -3869,7 +3982,10 @@ turn).  Programmatic fragment updates do not enter undo history."
                               :block-id block-id
                               :label-left label-left
                               :label-right label-right
-                              :body body)
+                              :body body
+                              :group-id group-id
+                              :group-label group-label
+                              :group-expanded group-expanded)
                              :navigation navigation
                              :append append
                              :create-new create-new

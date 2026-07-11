@@ -43,14 +43,38 @@
 When run, the buffer is narrowed to the body region and
 `inhibit-read-only' is in effect.")
 
-(cl-defun agent-shell-ui-make-fragment-model (&key (namespace-id "global") (block-id "1") label-left label-right body)
+(cl-defun agent-shell-ui-make-fragment-model (&key (namespace-id "global") (block-id "1") label-left label-right body group-id group-label (group-expanded t))
   "Create a fragment model alist.
-NAMESPACE-ID, BLOCK-ID, LABEL-LEFT, LABEL-RIGHT, and BODY are the keys."
+NAMESPACE-ID, BLOCK-ID, LABEL-LEFT, LABEL-RIGHT, and BODY are the keys.
+
+GROUP-ID nests this fragment under a collapsible group header (a sibling
+fragment with `block-id' GROUP-ID in the same namespace).  When that
+header does not yet exist, GROUP-LABEL materializes it (auto-create) with
+GROUP-EXPANDED as its initial fold state.  GROUP-ID nil means a top-level
+fragment."
   (list (cons :namespace-id namespace-id)
         (cons :block-id block-id)
         (cons :label-left (agent-shell-ui--string-or-nil label-left))
         (cons :label-right (agent-shell-ui--string-or-nil label-right))
-        (cons :body (agent-shell-ui--string-or-nil body))))
+        (cons :body (agent-shell-ui--string-or-nil body))
+        (cons :group-id (agent-shell-ui--string-or-nil group-id))
+        (cons :group-label (agent-shell-ui--string-or-nil group-label))
+        (cons :group-expanded group-expanded)))
+
+(cl-defun agent-shell-ui-make-group-model (&key (namespace-id "global") (block-id "1") label-left label-right (expanded t))
+  "Create a group-header model alist.
+
+A group header is a collapsible fragment with no body of its own; its
+members are separate fragments referencing it by qualified-id via
+`agent-shell-ui-make-fragment-model' GROUP-ID.  NAMESPACE-ID, BLOCK-ID,
+LABEL-LEFT, and LABEL-RIGHT render the header line.  EXPANDED sets the
+initial fold state.  v1 is two-level: a group may not itself be nested."
+  (list (cons :namespace-id namespace-id)
+        (cons :block-id block-id)
+        (cons :kind 'group)
+        (cons :label-left (agent-shell-ui--string-or-nil label-left))
+        (cons :label-right (agent-shell-ui--string-or-nil label-right))
+        (cons :expanded expanded)))
 
 (defun agent-shell-ui--insert-read-only (text)
   "Insert TEXT as read-only output."
@@ -89,6 +113,10 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                  (new-label-left (map-elt model :label-left))
                  (new-label-right (map-elt model :label-right))
                  (new-body (map-elt model :body))
+                 (group-member-id (map-elt model :group-id))
+                 (effective-expanded (if (eq (map-elt model :kind) 'group)
+                                         (map-elt model :expanded)
+                                       expanded))
                  (block-start nil)
                  (padding-start nil)
                  (padding-end nil)
@@ -99,6 +127,34 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                            (lambda (_ state)
                              (equal (map-elt state :qualified-id) qualified-id))
                            t))))
+            ;; Resolve group membership.  A NEW member materializes its
+            ;; header (auto-create) and routes into the group's region.  An
+            ;; EXISTING member keeps whatever group it already belongs to;
+            ;; an update must never create a header or re-route, otherwise a
+            ;; caller whose group-id advanced (e.g. a message streamed between
+            ;; a tool call and its completion) would spawn an empty group.
+            ;; Either way the resolved parent qualified-id and indent are
+            ;; recorded on the model so insertion and body regeneration nest.
+            (cond
+             ((and match (not create-new))
+              (when-let* ((state (get-text-property (prop-match-beginning match)
+                                                    'agent-shell-ui-state))
+                          (existing-group (map-elt state :group-id)))
+                (setq model (append model
+                                    (list (cons :group-qualified-id existing-group)
+                                          (cons :group-indent
+                                                (or (map-elt state :group-indent) "  ")))))))
+             (group-member-id
+              (let ((group-qualified-id
+                     (agent-shell-ui--ensure-group-header
+                      :namespace-id namespace-id
+                      :group-id group-member-id
+                      :group-label (map-elt model :group-label)
+                      :expanded (map-elt model :group-expanded)
+                      :navigation navigation)))
+                (setq model (append model
+                                    (list (cons :group-qualified-id group-qualified-id)
+                                          (cons :group-indent "  ")))))))
             (when (or new-label-left new-label-right new-body)
               (cond
                ;; Existing block — apply edits per changed section.
@@ -161,7 +217,13 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                                       (cons :label-right
                                             (or new-label-right
                                                 (map-elt existing-labels :label-right)))
-                                      (cons :body new-body))))
+                                      (cons :body new-body)
+                                      ;; Preserve group membership + indent so
+                                      ;; the regenerated member stays nested.
+                                      (cons :group-qualified-id
+                                            (map-elt model :group-qualified-id))
+                                      (cons :group-indent
+                                            (map-elt model :group-indent)))))
                           (delete-region block-start current-block-end)
                           (goto-char block-start)
                           (agent-shell-ui--insert-fragment
@@ -171,15 +233,37 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                                          (agent-shell-ui--block-range :position block-start)))
                               (map-elt block-range :end))
                             (point)))))
+               ;; New group member, inserted into the group's region.  The
+               ;; group's trailing separator (after the header) already sits
+               ;; below, so no trailing newlines are added here.
+               ((map-elt model :group-qualified-id)
+                (goto-char (agent-shell-ui--group-insertion-point
+                            :group-qualified-id (map-elt model :group-qualified-id)))
+                (setq padding-start (point))
+                (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
+                (setq block-start (point))
+                (agent-shell-ui--insert-fragment model qualified-id effective-expanded navigation)
+                (setq padding-end (point)))
                ;; New block.
                (t
                 (goto-char (point-max))
                 (setq padding-start (point))
                 (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
                 (setq block-start (point))
-                (agent-shell-ui--insert-fragment model qualified-id expanded navigation)
+                (agent-shell-ui--insert-fragment model qualified-id effective-expanded navigation)
                 (agent-shell-ui--insert-read-only "\n\n")
                 (setq padding-end (point)))))
+            ;; A collapsed group's members must stay hidden across updates.
+            ;; A member's own edit path (insert, or replace-label/body on an
+            ;; update) restores visibility from the member's own state, which
+            ;; would reveal it under a folded header; re-apply the group
+            ;; collapse so updates don't leak members onto the header line.
+            (when-let* ((group-qid (map-elt model :group-qualified-id))
+                        (header (agent-shell-ui--group-header-range group-qid))
+                        (header-state (get-text-property (map-elt header :start)
+                                                         'agent-shell-ui-state))
+                        ((map-elt header-state :collapsed)))
+              (agent-shell-ui--set-group-collapsed group-qid t))
             (when on-post-process
               (funcall on-post-process))
             (when-let* ((block-range (agent-shell-ui--block-range :position block-start)))
@@ -295,7 +379,8 @@ state, because label-less fragments don't follow `state :collapsed'
         (remove-text-properties body-start body-end '(invisible nil)))
       (goto-char body-end)
       (let ((insert-start (point)))
-        (insert (agent-shell-ui--indent-text chunk "  "))
+        (insert (agent-shell-ui--indent-text
+                 chunk (concat (or (map-elt state :group-indent) "") "  ")))
         (let ((insert-end (point)))
           (agent-shell-ui--apply-body-section-properties
            insert-start insert-end qualified-id state body-invisible)
@@ -327,7 +412,8 @@ matches the body's current visibility, not caller-supplied state."
           (setq trimmed (concat (string-trim-right trimmed) "\n\n")))
         (let ((insert-start (point)))
           (insert (agent-shell-ui--indent-text
-                   (string-remove-prefix "  " trimmed) "  "))
+                   (string-remove-prefix "  " trimmed)
+                   (concat (or (map-elt state :group-indent) "") "  ")))
           (let ((insert-end (point)))
             (agent-shell-ui--apply-body-section-properties
              insert-start insert-end qualified-id state body-invisible)
@@ -448,6 +534,135 @@ In the form:
                          (prop-match-end forward-match)
                        (prop-match-end backward-match)))))))))
 
+(defun agent-shell-ui--group-header-range (group-qualified-id)
+  "Return (:start :end) of the group header GROUP-QUALIFIED-ID, or nil."
+  (save-mark-and-excursion
+    (goto-char (point-min))
+    (when-let* ((match (text-property-search-forward
+                        'agent-shell-ui-state nil
+                        (lambda (_ state)
+                          (and (equal (map-elt state :qualified-id) group-qualified-id)
+                               (eq (map-elt state :kind) 'group)))
+                        t)))
+      (agent-shell-ui--block-range :position (prop-match-beginning match)))))
+
+(cl-defun agent-shell-ui--group-children (&key group-qualified-id)
+  "Return ordered member block ranges of group GROUP-QUALIFIED-ID.
+Each element is (:qualified-id ID :start S :end E).  Members are the
+fragments that follow the header contiguously and carry `:group-id'
+equal to GROUP-QUALIFIED-ID; the run stops at the first non-member."
+  (when-let* ((header (agent-shell-ui--group-header-range group-qualified-id)))
+    (save-mark-and-excursion
+      (let ((children '())
+            (pos (map-elt header :end)))
+        (catch 'done
+          (while t
+            (goto-char pos)
+            (skip-chars-forward " \t\n")
+            (when (eobp) (throw 'done nil))
+            (let ((state (get-text-property (point) 'agent-shell-ui-state)))
+              (unless (and state (equal (map-elt state :group-id) group-qualified-id))
+                (throw 'done nil))
+              (let ((block (agent-shell-ui--block-range :position (point))))
+                (push (list (cons :qualified-id (map-elt state :qualified-id))
+                            (cons :start (map-elt block :start))
+                            (cons :end (map-elt block :end)))
+                      children)
+                (setq pos (map-elt block :end))))))
+        (nreverse children)))))
+
+(cl-defun agent-shell-ui--group-child-region (&key group-qualified-id)
+  "Return (:start :end) spanning group GROUP-QUALIFIED-ID's members, or nil.
+Spans from just after the header to the end of the last member."
+  (when-let* ((header (agent-shell-ui--group-header-range group-qualified-id))
+              (children (agent-shell-ui--group-children :group-qualified-id group-qualified-id)))
+    (list (cons :start (map-elt header :end))
+          (cons :end (map-elt (car (last children)) :end)))))
+
+(cl-defun agent-shell-ui--group-insertion-point (&key group-qualified-id)
+  "Return the buffer position for a new member of group GROUP-QUALIFIED-ID.
+After the current last member, or just after the header when empty."
+  (when-let* ((header (agent-shell-ui--group-header-range group-qualified-id)))
+    (if-let* ((children (agent-shell-ui--group-children :group-qualified-id group-qualified-id)))
+        (map-elt (car (last children)) :end)
+      (map-elt header :end))))
+
+(cl-defun agent-shell-ui--ensure-group-header (&key namespace-id group-id group-label (expanded t) navigation)
+  "Ensure a header for NAMESPACE-ID/GROUP-ID exists, creating it if not.
+When absent, create it at `point-max' with GROUP-LABEL as its label and
+EXPANDED as its initial fold state, and NAVIGATION for navigability.
+Return the header's qualified-id."
+  (let ((group-qualified-id (format "%s-%s" namespace-id group-id)))
+    (unless (agent-shell-ui--group-header-range group-qualified-id)
+      (goto-char (point-max))
+      (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
+      (agent-shell-ui--insert-fragment
+       (agent-shell-ui-make-group-model
+        :namespace-id namespace-id :block-id group-id
+        :label-left group-label :expanded expanded)
+       group-qualified-id expanded navigation)
+      (agent-shell-ui--insert-read-only "\n\n"))
+    group-qualified-id))
+
+(defun agent-shell-ui--labels-end (block)
+  "Return the end of BLOCK's label-right, else label-left, else nil."
+  (or (map-elt (agent-shell-ui--nearest-range-matching-property
+                :property 'agent-shell-ui-section :value 'label-right
+                :from (map-elt block :start) :to (map-elt block :end))
+               :end)
+      (map-elt (agent-shell-ui--nearest-range-matching-property
+                :property 'agent-shell-ui-section :value 'label-left
+                :from (map-elt block :start) :to (map-elt block :end))
+               :end)))
+
+(defun agent-shell-ui--set-indicator-collapsed (block collapsed)
+  "Set BLOCK's fold indicator glyph to `▶'/`▼' to match COLLAPSED.
+Both glyphs are two columns wide, so surrounding positions do not shift."
+  (when-let* ((indicator (agent-shell-ui--nearest-range-matching-property
+                          :property 'agent-shell-ui-section :value 'indicator
+                          :from (map-elt block :start) :to (map-elt block :end)))
+              (props (text-properties-at (map-elt indicator :start))))
+    (delete-region (map-elt indicator :start) (map-elt indicator :end))
+    (goto-char (map-elt indicator :start))
+    (insert (if collapsed "▶ " "▼ "))
+    (add-text-properties (map-elt indicator :start) (point) props)))
+
+(defun agent-shell-ui--apply-own-collapsed (block-start)
+  "Re-apply the fragment at BLOCK-START's own fold state to its content.
+Leaf: hide/show its body per `:collapsed'.  Group: recurse into members."
+  (when-let* ((state (get-text-property block-start 'agent-shell-ui-state))
+              (block (agent-shell-ui--block-range :position block-start)))
+    (if (eq (map-elt state :kind) 'group)
+        (agent-shell-ui--set-group-collapsed (map-elt state :qualified-id)
+                                             (and (map-elt state :collapsed) t))
+      (when-let* ((body (agent-shell-ui--nearest-range-matching-property
+                         :property 'agent-shell-ui-section :value 'body
+                         :from (map-elt block :start) :to (map-elt block :end)))
+                  (invisible-start (agent-shell-ui--labels-end block)))
+        (put-text-property invisible-start (map-elt body :end)
+                           'invisible (and (map-elt state :collapsed) t))))))
+
+(defun agent-shell-ui--set-group-collapsed (group-qualified-id collapsed)
+  "Fold or unfold group GROUP-QUALIFIED-ID (recompute-on-toggle).
+COLLAPSED hides the whole member region regardless of member states;
+expanding reveals it and restores each member's own fold state."
+  (when-let* ((header (agent-shell-ui--group-header-range group-qualified-id))
+              (region (agent-shell-ui--group-child-region
+                       :group-qualified-id group-qualified-id))
+              (state (get-text-property (map-elt header :start) 'agent-shell-ui-state)))
+    (if collapsed
+        (put-text-property (map-elt region :start) (map-elt region :end)
+                           'invisible t)
+      (put-text-property (map-elt region :start) (map-elt region :end)
+                         'invisible nil)
+      (dolist (child (agent-shell-ui--group-children
+                      :group-qualified-id group-qualified-id))
+        (agent-shell-ui--apply-own-collapsed (map-elt child :start))))
+    (agent-shell-ui--set-indicator-collapsed header collapsed)
+    (map-put! state :collapsed collapsed)
+    (put-text-property (map-elt header :start) (map-elt header :end)
+                       'agent-shell-ui-state state)))
+
 (defun agent-shell-ui--insert-fragment (model qualified-id &optional expanded navigation)
   "Insert fragment from MODEL with QUALIFIED-ID text properties.
 EXPANDED determines initial state (default nil for collapsed).
@@ -455,27 +670,40 @@ NAVIGATION controls navigability:
 
  `never' (not navigatable)
  `auto' (navigatable if body and indicator present)
- `always' (always navigatable)."
-  (let ((block-start (point))
-        (label-left (map-elt model :label-left))
-        (label-right (map-elt model :label-right))
-        (body (map-elt model :body))
-        (need-space nil)
-        (indicator-start)
-        (indicator-end)
-        (label-left-start)
-        (label-left-end)
-        (label-right-start)
-        (label-right-end)
-        (body-start)
-        (body-end)
-        (collapsable))
+ `always' (always navigatable).
 
-    ;; Insert collapse indicator if body exists
+A group header (MODEL `:kind' `group') gets a fold triangle and no body of
+its own; its members render below it as separate fragments tagged with its
+qualified-id via `:group-qualified-id'.  MODEL `:group-indent' visually
+indents a member's header line under its group header."
+  (let* ((block-start (point))
+         (kind (map-elt model :kind))
+         (group (eq kind 'group))
+         (group-indent (or (map-elt model :group-indent) ""))
+         (group-qualified-id (map-elt model :group-qualified-id))
+         (body-indent (concat group-indent "  "))
+         (label-left (map-elt model :label-left))
+         (label-right (map-elt model :label-right))
+         (body (unless group (map-elt model :body)))
+         (need-space nil)
+         (indicator-start)
+         (indicator-end)
+         (label-left-start)
+         (label-left-end)
+         (label-right-start)
+         (label-right-end)
+         (body-start)
+         (body-end)
+         (collapsable))
+
+    ;; Insert collapse indicator.  A body (or a group header, whose members
+    ;; are its collapsible content) gets a fold triangle; a plain labels-only
+    ;; fragment reserves two columns so it aligns and doesn't jump when a
+    ;; body arrives later.
     (when-let* ((has-labels (or label-left label-right)))
-      (if body
+      (if (or body group)
           (progn
-            (setq collapsable has-labels)
+            (setq collapsable (and body has-labels))
             (setq indicator-start (point))
             (insert (agent-shell-ui-add-action-to-text
                      (if expanded "▼ " "▶ ")
@@ -556,13 +784,18 @@ NAVIGATION controls navigability:
         (setq body (concat (string-trim-right body) "\n\n")))
       (setq body-start (point))
       (let ((clean-body (string-remove-prefix "  " body)))
-        (insert (agent-shell-ui--indent-text clean-body "  ")))
+        (insert (agent-shell-ui--indent-text clean-body body-indent)))
       (setq body-end (point))
       (add-text-properties body-start body-end
                            `(agent-shell-ui-section body
                                                     help-echo ,qualified-id
                                                     read-only t
                                                     front-sticky (read-only))))
+    ;; Indent a group member's header line under its group header.  The
+    ;; body already carries its own (deeper) `line-prefix' from above.
+    (unless (string-empty-p group-indent)
+      (add-text-properties block-start (or label-right-end label-left-end indicator-end)
+                           `(line-prefix ,group-indent wrap-prefix ,group-indent)))
     ;; Include the newlines before the body in the invisible region
     (when collapsable
       (add-text-properties (or label-right-end label-left-end)
@@ -581,10 +814,14 @@ NAVIGATION controls navigability:
      block-start (or body-end label-right-end label-left-end)
      'agent-shell-ui-state (list
                             (cons :qualified-id qualified-id)
+                            (cons :kind kind)
+                            (cons :group-id group-qualified-id)
+                            (cons :group-indent group-indent)
                             (cons :collapsed (not expanded))
                             (cons :navigatable (cond
                                                 ((eq navigation 'never) nil)
                                                 ((eq navigation 'always) t)
+                                                (group t)
                                                 ((eq navigation 'auto)
                                                  (and body indicator-start))
                                                 (t
@@ -677,9 +914,21 @@ When NO-UNDO is non-nil, disable undo recording."
 
 (defun agent-shell-ui--toggle-fragment-at-point ()
   "Toggle visibility of fragment body at point.
-Internal primitive — callers must position point on the fragment's
+Internal primitive; callers must position point on the fragment's
 state-property range first.  User-facing toggling goes through
 `agent-shell-ui-toggle-fragment'."
+  (save-mark-and-excursion
+    (if-let* ((state (get-text-property (point) 'agent-shell-ui-state))
+              ((eq (map-elt state :kind) 'group))
+              (inhibit-read-only t)
+              (buffer-undo-list t))
+        (agent-shell-ui--set-group-collapsed
+         (map-elt state :qualified-id)
+         (not (map-elt state :collapsed)))
+      (agent-shell-ui--toggle-leaf-fragment-at-point))))
+
+(defun agent-shell-ui--toggle-leaf-fragment-at-point ()
+  "Toggle visibility of a non-group fragment's body at point."
   (save-mark-and-excursion
     (when-let* ((inhibit-read-only t)
                 (buffer-undo-list t)
@@ -894,6 +1143,44 @@ that span a line break."
                            copy)
       copy)))
 
+(defun agent-shell-ui--next-visible-navigatable ()
+  "From point, return the start of the next visible navigatable block, or nil.
+Blocks hidden inside a collapsed group (their start is `invisible') are
+skipped; a collapsed leaf fragment, whose header stays visible, is not."
+  (let (result)
+    (catch 'done
+      (while t
+        (let ((next (text-property-search-forward
+                     'agent-shell-ui-state nil
+                     (lambda (_old-val new-val)
+                       (and new-val (map-elt new-val :navigatable)))
+                     t)))
+          (unless next (throw 'done nil))
+          (let ((beg (prop-match-beginning next)))
+            (unless (invisible-p beg)
+              (setq result beg)
+              (throw 'done nil))))))
+    result))
+
+(defun agent-shell-ui--previous-visible-navigatable ()
+  "From point, return the start of the previous visible navigatable block, or nil.
+Skips blocks hidden inside a collapsed group (see
+`agent-shell-ui--next-visible-navigatable')."
+  (let (result)
+    (catch 'done
+      (while t
+        (let ((prev (text-property-search-backward
+                     'agent-shell-ui-state nil
+                     (lambda (_old-val new-val)
+                       (and new-val (map-elt new-val :navigatable)))
+                     t)))
+          (unless prev (throw 'done nil))
+          (let ((beg (prop-match-beginning prev)))
+            (unless (invisible-p beg)
+              (setq result beg)
+              (throw 'done nil))))))
+    result))
+
 (defun agent-shell-ui-forward-block ()
   "Jump to the next block."
   (interactive)
@@ -904,12 +1191,7 @@ that span a line break."
                        (when-let* ((state (get-text-property (point) 'agent-shell-ui-state))
                                    (block (agent-shell-ui--block-range :position (point))))
                          (goto-char (map-elt block :end)))
-                       (when-let* ((next (text-property-search-forward
-                                          'agent-shell-ui-state nil
-                                          (lambda (_old-val new-val)
-                                            (and new-val (map-elt new-val :navigatable)))
-                                          t)))
-                         (prop-match-beginning next)))))
+                       (agent-shell-ui--next-visible-navigatable))))
     (when found
       (deactivate-mark)
       (goto-char found)
@@ -930,12 +1212,7 @@ block's beginning instead of the previous block."
                                   (map-elt state :navigatable)
                                   (< block-start start-point))
                              block-start
-                           (when-let* ((prev (text-property-search-backward
-                                              'agent-shell-ui-state nil
-                                              (lambda (_old-val new-val)
-                                                (and new-val (map-elt new-val :navigatable)))
-                                              t)))
-                             (prop-match-beginning prev)))))))
+                           (agent-shell-ui--previous-visible-navigatable))))))
     (when found
       (deactivate-mark)
       (goto-char found)

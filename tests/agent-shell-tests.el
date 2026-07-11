@@ -4043,5 +4043,49 @@ with \"Method not found\"."
         (agent-shell--refresh-session-title)
         (should (equal sent-method "session/list"))))))
 
+;;; Tests for agent-shell--tool-call-group-id
+
+(ert-deftest agent-shell--tool-call-group-id-groups-consecutive-runs-test ()
+  "Consecutive tool calls share a group; an interruption starts a new one.
+A tool's group is assigned once and reused, so a later update keeps it even
+if a message streamed in between."
+  (let ((state (list (cons :last-entry-type nil)
+                     (cons :tool-call-group-count 0)
+                     (cons :tool-calls nil))))
+    ;; First tool call after a non-tool entry -> group 1.
+    (should (equal "tool-calls-1" (agent-shell--tool-call-group-id state "a")))
+    (map-put! state :last-entry-type "tool_call")
+    ;; A second consecutive tool call joins the same group.
+    (should (equal "tool-calls-1" (agent-shell--tool-call-group-id state "b")))
+    (map-put! state :last-entry-type "tool_call_update")
+    ;; A message interrupts the run...
+    (map-put! state :last-entry-type "agent_message_chunk")
+    ;; ...but an update to an existing tool reuses its stored group.
+    (should (equal "tool-calls-1" (agent-shell--tool-call-group-id state "a")))
+    ;; A brand-new tool after the message starts a fresh group.
+    (should (equal "tool-calls-2" (agent-shell--tool-call-group-id state "c")))))
+
+(ert-deftest agent-shell--tool-call-group-header-label-test ()
+  "Header glyph is `completed' only when all are (else the worst present),
+and the completed/total count lets a non-completed member lift the total only."
+  (cl-flet ((label (statuses)
+              (substring-no-properties
+               (agent-shell--tool-call-group-header-label statuses))))
+    ;; All completed: check glyph and full count.
+    (should (string-prefix-p "✓" (label '("completed" "completed"))))
+    (should (string-suffix-p "Tool calls 5/5"
+                             (label '("completed" "completed" "completed"
+                                      "completed" "completed"))))
+    ;; A failure dominates and drops the numerator.
+    (should (string-prefix-p "✗" (label '("failed" "in_progress" "completed"))))
+    (should (string-suffix-p "Tool calls 3/5"
+                             (label '("completed" "completed" "completed"
+                                      "failed" "failed"))))
+    ;; In-progress dominates when nothing failed.
+    (should (string-prefix-p "…" (label '("completed" "pending" "in_progress"))))
+    (should (string-suffix-p "Tool calls 2/5"
+                             (label '("completed" "completed" "in_progress"
+                                      "pending" "in_progress"))))))
+
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
