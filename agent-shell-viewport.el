@@ -220,7 +220,7 @@ Returns an alist with insertion details or nil otherwise:
     (user-error "Not in a shell viewport buffer"))
   (let ((shell-buffer (agent-shell-viewport--shell-buffer))
         (viewport-buffer (current-buffer))
-        (prompt (buffer-string)))
+        (prompt (string-trim (buffer-string))))
     (with-current-buffer shell-buffer
       (if (agent-shell-viewport--busy-p)
           (agent-shell-queue-request prompt)
@@ -239,7 +239,7 @@ Returns an alist with insertion details or nil otherwise:
       (user-error "Not in a shell viewport buffer"))
     (let ((shell-buffer (agent-shell-viewport--shell-buffer))
           (viewport-buffer (current-buffer))
-          (prompt (buffer-string)))
+          (prompt (string-trim (buffer-string))))
       (when (string-empty-p (string-trim prompt))
         (agent-shell-viewport--initialize)
         (user-error "Nothing to send"))
