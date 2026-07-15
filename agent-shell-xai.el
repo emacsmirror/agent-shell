@@ -106,6 +106,14 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :shell-prompt-regexp "Grok> "
    :icon-name agent-shell-xai-icon-name
    :welcome-function #'agent-shell-xai--welcome-message
+   ;; Grok ACP advertises authMethods: cached_token (from ~/.grok/auth.json)
+   ;; and grok.com (interactive sign-in). defaultAuthMethodId is cached_token.
+   ;; Without an authenticate request, session/new fails with
+   ;; AuthorizationRequired / "Transport channel closed".
+   :needs-authentication t
+   :authenticate-request-maker (lambda ()
+                                 (acp-make-authenticate-request
+                                  :method-id "cached_token"))
    :client-maker (lambda (buffer)
                    (agent-shell-xai-make-client :buffer buffer))
    :default-model-id (lambda () (if (functionp agent-shell-xai-default-model-id)
