@@ -671,6 +671,12 @@ You can set a default agent to use for all new shells started via =agent-shell= 
 (setq agent-shell-preferred-agent-config (agent-shell-anthropic-make-claude-code-config))
 #+end_src
 
+Or by identifier (e.g. Grok Build):
+
+#+begin_src emacs-lisp
+(setq agent-shell-preferred-agent-config 'grok-build)
+#+end_src
+
 *** Configuring MCP servers
 
 You can configure MCP servers directly via =agent-shell=. This allows you to avoid having to repeat
@@ -912,10 +918,6 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-goose-acp-command                 | Command and parameters for the Goose client.                                    |
 | agent-shell-goose-authentication              | Configuration for Goose authentication.                                         |
 | agent-shell-goose-environment                 | Environment variables for the Goose client.                                     |
-| agent-shell-xai-acp-command                   | Command and parameters for the Grok Build (xAI) ACP client.                     |
-| agent-shell-xai-default-model-id              | Default Grok Build model ID.                                                    |
-| agent-shell-xai-default-session-mode-id       | Default Grok Build session mode ID.                                             |
-| agent-shell-xai-environment                   | Environment variables for the Grok Build ACP client.                            |
 | agent-shell-header-style                      | Style for agent shell buffer headers.                                           |
 | agent-shell-highlight-blocks                  | Whether or not to highlight source blocks.                                      |
 | agent-shell-mcp-servers                       | List of MCP servers to initialize when creating a new session.                  |
@@ -960,6 +962,10 @@ always go to Evil modes if you need to with ~C-z~).
 | agent-shell-ui-mode-hook                      | Hook run after entering or leaving ‘agent-shell-ui-mode’.                       |
 | agent-shell-user-message-expand-by-default    | Whether user message sections should be expanded by default.                    |
 | agent-shell-write-inhibit-minor-modes         | List of minor mode commands to inhibit during ‘fs/write_text_file’ edits.       |
+| agent-shell-xai-acp-command                   | Command and parameters for the Grok Build (xAI) ACP client.                     |
+| agent-shell-xai-default-model-id              | Default Grok Build model ID.                                                    |
+| agent-shell-xai-default-session-mode-id       | Default Grok Build session mode ID.                                             |
+| agent-shell-xai-environment                   | Environment variables for the Grok Build ACP client.                            |
 
 * Commands
 #+BEGIN_SRC emacs-lisp :results table :colnames '("Binding" "Command" "Description") :exports results
