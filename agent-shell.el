@@ -1013,6 +1013,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
                              (cons :title nil)))
         (cons :config-options nil)
         (cons :last-entry-type nil)
+        (cons :last-agent-message-id nil)
         (cons :chunked-group-count 0)
         (cons :activity-group-count 0)
         (cons :request-count 0)
@@ -2368,17 +2369,28 @@ No-op with no members yet."
           ((map-elt state :pending-restore)
            (agent-shell--append-restore-notification state acp-notification))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "agent_message_chunk")
-           (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
-             (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
-             (agent-shell--append-transcript
-              :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
-              :file-path agent-shell--transcript-file))
-           ;; Indent markdown headers in LLM output so they nest
-           ;; below the transcript's ## section headers.  Applied
-           ;; per-chunk: if a header is split across chunks it may
-           ;; not be indented (graceful degradation).
-           (let ((content (agent-shell--content-block-to-markdown
-                           (map-nested-elt acp-notification '(params update content)))))
+           ;; Decide message boundaries by ACP's `messageId' when present:
+           ;; distinct messages must never coalesce, even if an interleaved
+           ;; entry (e.g. a tool call) failed to advance `:last-entry-type'
+           ;; and left it looking like a continuation.  `messageId' is
+           ;; optional (older agents omit it), so fall back to the turn
+           ;; boundary heuristic: a new run whenever the previous rendered
+           ;; entry was not itself a message chunk.
+           (let* ((message-id (map-nested-elt acp-notification '(params update messageId)))
+                  (new-message (if message-id
+                                   (not (equal message-id (map-elt state :last-agent-message-id)))
+                                 (not (equal (map-elt state :last-entry-type) "agent_message_chunk"))))
+                  (content (agent-shell--content-block-to-markdown
+                            (map-nested-elt acp-notification '(params update content)))))
+             (when new-message
+               (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+               (agent-shell--append-transcript
+                :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
+                :file-path agent-shell--transcript-file))
+             ;; Indent markdown headers in LLM output so they nest
+             ;; below the transcript's ## section headers.  Applied
+             ;; per-chunk: if a header is split across chunks it may
+             ;; not be indented (graceful degradation).
              (agent-shell--append-transcript
               :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
@@ -2386,23 +2398,21 @@ No-op with no members yet."
               :state state
               ;; Out of turn, key under a dedicated namespace so the
               ;; message forms its own fragment rather than coalescing
-              ;; into the previous turn's final message (same request-count
-              ;; and group-count).  ACP's ContentChunk.messageId is the
-              ;; spec's intended discriminator here, but it is optional and
-              ;; only populated by newer agents, so we group by turn
-              ;; boundary instead.
+              ;; into the previous turn's final message.
               :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn")
+              ;; Key on `messageId' when present so distinct messages stay
+              ;; distinct; otherwise fall back to the per-run group count.
               :block-id (format "%s-agent_message_chunk"
-                                (map-elt state :chunked-group-count))
+                                (or message-id (map-elt state :chunked-group-count)))
               :body content
-              :create-new (not (equal (map-elt state :last-entry-type)
-                                      "agent_message_chunk"))
+              :create-new new-message
               :append t
               :navigation 'never
               :render-body-images t
               ;; Out of turn (no prompt request in flight) lands the
               ;; message above the fresh prompt rather than after it.
-              :above-last-prompt (not (agent-shell--active-requests-p state))))
+              :above-last-prompt (not (agent-shell--active-requests-p state)))
+             (map-put! state :last-agent-message-id message-id))
            (map-put! state :last-entry-type "agent_message_chunk"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "tool_call")
            (agent-shell--save-tool-call

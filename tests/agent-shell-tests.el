@@ -573,6 +573,7 @@ block -- covering the dispatch path, not just the helper in isolation."
                      ;; Pre-set so the header/end-of-prompt branches are
                      ;; skipped; the test only exercises content rendering.
                      (cons :last-entry-type "agent_message_chunk")
+                     (cons :last-agent-message-id nil)
                      (cons :last-activity-time nil)))
         (rendered nil))
     (cl-letf (((symbol-function 'agent-shell--active-requests-p)
@@ -4139,6 +4140,83 @@ if a message streamed in between."
     ;; A brand-new tool after the message starts a fresh group.
     (should (equal "activity-2" (agent-shell--activity-group-id state "c")))))
 
+(cl-defun agent-shell-tests--message-chunk-fragments (&key chunks)
+  "Drive `agent-shell--on-notification' with CHUNKS and return the fragments.
+
+CHUNKS is a list of (MESSAGE-ID . TEXT) pairs (MESSAGE-ID may be nil).
+Between successive chunks `:last-entry-type' is left as-is, reproducing an
+interleaved entry that failed to advance it.  Returns a list of
+\(BLOCK-ID . CREATE-NEW) as passed to `agent-shell--update-fragment'."
+  (let ((state (list (cons :last-entry-type nil)
+                     (cons :last-agent-message-id nil)
+                     (cons :chunked-group-count 0)
+                     (cons :active-requests t)
+                     (cons :pending-restore nil)
+                     (cons :last-activity-time nil)
+                     (cons :buffer nil)))
+        (calls '()))
+    (cl-letf (((symbol-function 'agent-shell--update-fragment)
+               (lambda (&rest args)
+                 (push (cons (plist-get args :block-id) (plist-get args :create-new)) calls)))
+              ((symbol-function 'agent-shell--append-transcript) #'ignore)
+              ((symbol-function 'agent-shell--active-requests-p) (lambda (&rest _) t))
+              ((symbol-function 'agent-shell--content-block-to-markdown)
+               (lambda (block) (map-elt block 'text)))
+              ((symbol-function 'agent-shell--indent-markdown-headers) #'identity))
+      (dolist (chunk chunks)
+        (agent-shell--on-notification
+         :state state
+         :acp-notification
+         `((method . "session/update")
+           (params (update (sessionUpdate . "agent_message_chunk")
+                           (messageId . ,(car chunk))
+                           (content (type . "text") (text . ,(cdr chunk)))))))))
+    (nreverse calls)))
+
+(ert-deftest agent-shell--message-chunk-distinct-message-ids-dont-coalesce-test ()
+  "Distinct `messageId's form separate fragments even when an interleaved
+entry left `:last-entry-type' unadvanced.  Regression for glued messages
+like \"Emacs:The GUI Emacs\": two turns whose text merged into one block."
+  (let ((calls (agent-shell-tests--message-chunk-fragments
+                :chunks '(("msg_A" . "user's Emacs:")
+                          ("msg_B" . "The GUI Emacs")))))
+    ;; Different messageIds -> different block-ids, each a new fragment.
+    (should (equal "msg_A-agent_message_chunk" (car (nth 0 calls))))
+    (should (equal "msg_B-agent_message_chunk" (car (nth 1 calls))))
+    (should (cdr (nth 1 calls)))))
+
+(ert-deftest agent-shell--message-chunk-same-message-id-appends-test ()
+  "Chunks sharing a `messageId' stream into one fragment (append, not new)."
+  (let ((calls (agent-shell-tests--message-chunk-fragments
+                :chunks '(("msg_A" . "Hello ") ("msg_A" . "world")))))
+    (should (equal "msg_A-agent_message_chunk" (car (nth 0 calls))))
+    (should (equal "msg_A-agent_message_chunk" (car (nth 1 calls))))
+    ;; First chunk creates the fragment; the second appends to it.
+    (should (cdr (nth 0 calls)))
+    (should-not (cdr (nth 1 calls)))))
+
+(ert-deftest agent-shell--message-chunk-without-message-id-limitation-test ()
+  "Document the `messageId' requirement for `agent_message_chunk' updates.
+
+`messageId' is the only reliable message boundary.  When it is absent
+\(older agents omit it) the handler falls back to `:last-entry-type': a
+new fragment starts only when the previous rendered entry was not itself
+a message chunk.  So two `agent_message_chunk' updates that are NOT
+separated by a run-advancing entry -- e.g. only a `usage_update', which
+does not touch `:last-entry-type', sits between them -- coalesce into one
+fragment even if the agent meant them as distinct messages.  Agents that
+emit `messageId' avoid this; those that omit it remain exposed."
+  (let ((calls (agent-shell-tests--message-chunk-fragments
+                ;; Two chunks the agent could mean as distinct messages;
+                ;; with no `messageId' and nothing advancing the run
+                ;; between them, they cannot be told apart.
+                :chunks '((nil . "Hello ") (nil . "world")))))
+    ;; Same block-id, second appends -> one merged fragment (the limitation).
+    (should (equal "1-agent_message_chunk" (car (nth 0 calls))))
+    (should (equal "1-agent_message_chunk" (car (nth 1 calls))))
+    (should (cdr (nth 0 calls)))
+    (should-not (cdr (nth 1 calls)))))
+
 (ert-deftest agent-shell--activity-group-current-id-shares-run-with-thoughts-test ()
   "Thoughts and tool calls share one activity run; a message breaks it.
 A thought between tool calls keeps the group open (it is part of the same
@@ -4169,6 +4247,7 @@ dispatch, since the defect is in the `tool_call_update' handler, not the
 group-id helper alone."
   (let ((state (list (cons :tool-calls nil)
                      (cons :last-entry-type nil)
+                     (cons :last-agent-message-id nil)
                      (cons :activity-group-count 0)
                      (cons :chunked-group-count 0)
                      (cons :active-requests t)
@@ -4209,6 +4288,7 @@ Guards that the #31 fix does not over-split: an in-place completion update
 between two tool calls keeps them together."
   (let ((state (list (cons :tool-calls nil)
                      (cons :last-entry-type nil)
+                     (cons :last-agent-message-id nil)
                      (cons :activity-group-count 0)
                      (cons :chunked-group-count 0)
                      (cons :active-requests t)
