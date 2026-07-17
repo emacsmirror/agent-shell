@@ -1016,6 +1016,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :last-agent-message-id nil)
         (cons :chunked-group-count 0)
         (cons :activity-group-count 0)
+        (cons :activity-thoughts nil)
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
@@ -2200,6 +2201,20 @@ result is reversed to reflect the order the calls were made."
                  pair))
              (map-elt state :tool-calls))))
 
+(defun agent-shell--mark-group-thought (state group-id)
+  "Record in STATE that the activity group GROUP-ID contains a thought.
+
+Thoughts are not stored in `:tool-calls', so the header label functions
+cannot see them from the tool-call members alone.  This records the
+group-ids that hold at least one thought so the label can mention it."
+  (unless (seq-contains-p (map-elt state :activity-thoughts) group-id)
+    (map-put! state :activity-thoughts
+              (cons group-id (map-elt state :activity-thoughts)))))
+
+(defun agent-shell--group-has-thought-p (state group-id)
+  "Return non-nil when the activity group GROUP-ID in STATE holds a thought."
+  (seq-contains-p (map-elt state :activity-thoughts) group-id))
+
 (defconst agent-shell--tool-call-kind-phrases
   '(("execute" . ((:past . "ran") (:present . "run")
                   (:singular . "command") (:plural . "commands")))
@@ -2246,7 +2261,7 @@ capitalize as needed.
             (if (= count 1) "a" (number-to-string count))
             (map-elt phrase (if (= count 1) :singular :plural)))))
 
-(cl-defun agent-shell--tool-call-group-descriptive-text (&key members)
+(cl-defun agent-shell--tool-call-group-descriptive-text (&key members thought)
   "Return a Claude Code style summary phrase for MEMBERS.
 
 MEMBERS is a list of (ID . TOOL-CALL) pairs in call order.  Kinds are
@@ -2254,24 +2269,28 @@ collapsed into counted phrases joined by commas, e.g. \"Ran 3 commands,
 read a file\", in first-seen order.  Only the first word is capitalized.
 A kind reads in the present tense (\"Run a command\") while any of its
 members is still pending or in progress, past tense once all have
-finished."
+finished.
+
+When THOUGHT is non-nil the group also contains a thought, summarized as
+a leading \"Thought\" phrase (e.g. \"Thought, ran 2 commands\", or just
+\"Thought\" when there are no tool calls).  Thoughts are not counted."
   (let* ((member-kind (lambda (member) (or (map-elt (cdr member) :kind) "other")))
-         (summary
-          (string-join
-           (seq-map
-            (lambda (kind)
-              (let ((of-kind (seq-filter (lambda (member)
-                                           (equal (funcall member-kind member) kind))
-                                         members)))
-                (agent-shell--tool-call-kind-phrase
-                 :kind kind
-                 :count (length of-kind)
-                 :pending (seq-some (lambda (member)
-                                      (member (map-elt (cdr member) :status)
-                                              '("pending" "in_progress")))
-                                    of-kind))))
-            (seq-uniq (seq-map member-kind members)))
-           ", ")))
+         (tool-phrases
+          (seq-map
+           (lambda (kind)
+             (let ((of-kind (seq-filter (lambda (member)
+                                          (equal (funcall member-kind member) kind))
+                                        members)))
+               (agent-shell--tool-call-kind-phrase
+                :kind kind
+                :count (length of-kind)
+                :pending (seq-some (lambda (member)
+                                     (member (map-elt (cdr member) :status)
+                                             '("pending" "in_progress")))
+                                   of-kind))))
+           (seq-uniq (seq-map member-kind members))))
+         (summary (string-join (if thought (cons "thought" tool-phrases) tool-phrases)
+                               ", ")))
     (if (string-empty-p summary)
         summary
       (concat (upcase (substring summary 0 1)) (substring summary 1)))))
@@ -2279,36 +2298,45 @@ finished."
 (defun agent-shell-activity-group-descriptive-label (group)
   "Return a Claude Code style header label for GROUP.
 
-GROUP is an alist with :state and :group-id.  A group with a single
-member shows that member's own label (like \"Backend modularity and
-dispatch structure\"); larger groups show a counted summary such as
-\"Ran 3 commands, read a file\".  No status glyph is shown, matching
-Claude Code's plain-text grouping.  Returns nil with no members yet.
+GROUP is an alist with :state and :group-id.  A group with a single tool
+call whose title is a description (a task or MCP tool) shows that title
+\(like \"Backend modularity and dispatch structure\"); larger groups show
+a counted summary such as \"Ran 3 commands, read a file\", prefixed with
+\"Thought\" when the group also contains a thought.  A group holding only
+thoughts reads \"Thought\".  No status glyph is shown, matching Claude
+Code's plain-text grouping.  Returns nil with nothing to summarize yet.
 See `agent-shell-activity-group-header-label-function'."
-  (when-let* ((members (agent-shell--group-tool-calls
-                        :state (map-elt group :state)
-                        :group-id (map-elt group :group-id))))
-    (or ;; A lone call whose title is a genuine description (a task or
-        ;; MCP tool, of kind nil/"other") stands in for the summary, as
-        ;; Claude Code does.  Standard kinds (execute, read, edit, ...)
-        ;; have titles that are just a command or path already shown on
-        ;; the member row below, so they use the counted summary instead.
-        (and (= (length members) 1)
-             (member (map-elt (cdar members) :kind) '(nil "other"))
-             (map-elt (agent-shell-make-tool-call-label
-                       (map-elt group :state) (caar members))
-                      :title))
-        (propertize (agent-shell--tool-call-group-descriptive-text :members members)
-                    'font-lock-face 'agent-shell-section-heading))))
+  (let* ((state (map-elt group :state))
+         (group-id (map-elt group :group-id))
+         (members (agent-shell--group-tool-calls :state state :group-id group-id))
+         (thought (agent-shell--group-has-thought-p state group-id)))
+    (cond
+     ;; A lone call whose title is a genuine description (a task or MCP
+     ;; tool, of kind nil/"other") stands in for the summary, as Claude
+     ;; Code does.  Standard kinds (execute, read, ...) have titles that
+     ;; are just a command or path already shown on the member row below,
+     ;; so they use the counted summary instead.
+     ((and (= (length members) 1) (not thought)
+           (member (map-elt (cdar members) :kind) '(nil "other")))
+      (map-elt (agent-shell-make-tool-call-label state (caar members)) :title))
+     ((or members thought)
+      (propertize (agent-shell--tool-call-group-descriptive-text
+                   :members members :thought thought)
+                  'font-lock-face 'agent-shell-section-heading)))))
 
 (defun agent-shell-activity-group-count-label (group)
   "Return the count-style header label for GROUP.
 GROUP is an alist with :state and :group-id.  Formats as
-\"✓ Tool calls 2/2\".  Returns nil with no members yet.
+\"✓ Tool calls 2/2\"; a group holding only thoughts reads \"Thinking\".
+Returns nil with no members yet.
 See `agent-shell-activity-group-header-label-function'."
-  (when-let* ((statuses (agent-shell--group-tool-statuses
-                         (map-elt group :state) (map-elt group :group-id))))
-    (agent-shell--tool-call-group-header-label statuses)))
+  (let* ((state (map-elt group :state))
+         (group-id (map-elt group :group-id))
+         (statuses (agent-shell--group-tool-statuses state group-id)))
+    (cond
+     (statuses (agent-shell--tool-call-group-header-label statuses))
+     ((agent-shell--group-has-thought-p state group-id)
+      (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading)))))
 
 (defvar agent-shell-activity-group-header-label-function
   #'agent-shell-activity-group-count-label
@@ -2508,7 +2536,12 @@ No-op with no members yet."
               :group-label agent-shell--activity-group-label
               :group-expanded agent-shell-activity-group-expand-by-default
               :render-body-images t
-              :above-last-prompt (not (agent-shell--active-requests-p state))))
+              :above-last-prompt (not (agent-shell--active-requests-p state)))
+             ;; Record the thought on its group and relabel the header so a
+             ;; thought-only group reads "Thinking"/"Thought" instead of the
+             ;; neutral placeholder, and a mixed group can mention it.
+             (agent-shell--mark-group-thought state group-id)
+             (agent-shell--refresh-activity-group-header state group-id))
            (map-put! state :last-entry-type "agent_thought_chunk"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
            ;; A user_message_chunk replays a user submission.  Render it

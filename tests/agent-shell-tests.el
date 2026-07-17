@@ -4412,8 +4412,9 @@ and the completed/total count lets a non-completed member lift the total only."
 word capitalized, present tense while any member is still unfinished."
   (cl-flet ((tc (id kind status)
               (cons id (list (cons :kind kind) (cons :status status))))
-            (text (members)
-              (agent-shell--tool-call-group-descriptive-text :members members)))
+            (text (members &optional thought)
+              (agent-shell--tool-call-group-descriptive-text
+               :members members :thought thought)))
     ;; Multiple kinds, first-seen order, only the first word capitalized.
     (should (equal "Ran 3 commands, read a file"
                    (text (list (tc "a" "execute" "completed")
@@ -4430,7 +4431,48 @@ word capitalized, present tense while any member is still unfinished."
     ;; A failed member still reads past tense (it did run).
     (should (equal "Ran a command" (text (list (tc "a" "execute" "failed")))))
     ;; nil kind falls back to the generic phrasing.
-    (should (equal "Ran a tool call" (text (list (tc "a" nil "completed")))))))
+    (should (equal "Ran a tool call" (text (list (tc "a" nil "completed")))))
+    ;; A thought prefixes a leading (uncounted) "Thought" phrase.
+    (should (equal "Thought, ran 2 commands"
+                   (text (list (tc "a" "execute" "completed")
+                               (tc "b" "execute" "completed"))
+                         t)))
+    ;; A thought with no tool calls reads just "Thought".
+    (should (equal "Thought" (text nil t)))))
+
+(ert-deftest agent-shell--activity-group-thought-labels-test ()
+  "Header labels reflect thoughts recorded on a group.
+A thought-only group reads \"Thinking\" (count) / \"Thought\" (descriptive);
+a mixed group counts its tools and, in descriptive style, mentions the
+thought."
+  (cl-flet ((state-with (tool-calls thought-groups)
+              (list (cons :tool-calls tool-calls)
+                    (cons :activity-thoughts thought-groups)))
+            (count (state)
+              (substring-no-properties
+               (agent-shell-activity-group-count-label
+                (list (cons :state state) (cons :group-id "g")))))
+            (descriptive (state)
+              (substring-no-properties
+               (agent-shell-activity-group-descriptive-label
+                (list (cons :state state) (cons :group-id "g"))))))
+    ;; Marking is idempotent and queryable.
+    (let ((state (state-with nil nil)))
+      (agent-shell--mark-group-thought state "g")
+      (agent-shell--mark-group-thought state "g")
+      (should (agent-shell--group-has-thought-p state "g"))
+      (should-not (agent-shell--group-has-thought-p state "other"))
+      (should (equal '("g") (map-elt state :activity-thoughts))))
+    ;; Thought-only group.
+    (let ((state (state-with nil '("g"))))
+      (should (equal "Thinking" (count state)))
+      (should (equal "Thought" (descriptive state))))
+    ;; Mixed group: count tallies tools; descriptive mentions the thought.
+    (let ((state (state-with '(("t1" (:group-id . "g") (:kind . "execute")
+                                (:status . "completed")))
+                             '("g"))))
+      (should (equal "✓ Tool calls 1/1" (count state)))
+      (should (equal "Thought, ran a command" (descriptive state))))))
 
 (ert-deftest agent-shell--adapt-notification-test ()
   "Test `agent-shell--adapt-notification'."
