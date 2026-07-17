@@ -4139,6 +4139,87 @@ if a message streamed in between."
     ;; A brand-new tool after the message starts a fresh group.
     (should (equal "tool-calls-2" (agent-shell--tool-call-group-id state "c")))))
 
+(ert-deftest agent-shell--tool-call-grouping-late-update-starts-new-group-test ()
+  "A message between a tool call and the next starts a fresh group.
+Regression for xenodium/agent-shell-js#31: a late in-place completion
+update for an earlier tool must not clobber the run boundary an
+interleaving message created, or the next tool call joins the earlier
+group and renders above the message.  Drives the full notification
+dispatch, since the defect is in the `tool_call_update' handler, not the
+group-id helper alone."
+  (let ((state (list (cons :tool-calls nil)
+                     (cons :last-entry-type nil)
+                     (cons :tool-call-group-count 0)
+                     (cons :chunked-group-count 0)
+                     (cons :active-requests t)
+                     (cons :last-activity-time nil)
+                     (cons :buffer nil))))
+    (cl-letf (((symbol-function 'agent-shell--update-fragment) #'ignore)
+              ((symbol-function 'agent-shell--refresh-tool-call-group-header) #'ignore)
+              ((symbol-function 'agent-shell--append-transcript) #'ignore)
+              ((symbol-function 'agent-shell--make-transcript-tool-call-entry)
+               (lambda (&rest _) ""))
+              ((symbol-function 'agent-shell--delete-fragment) #'ignore)
+              ((symbol-function 'agent-shell--cancel-idle-timer) #'ignore)
+              ((symbol-function 'agent-shell--emit-event) #'ignore)
+              ((symbol-function 'agent-shell-make-tool-call-label)
+               (lambda (&rest _) '((:status . "s") (:title . "t")))))
+      (cl-flet ((notify (update)
+                  (agent-shell--on-notification
+                   :state state
+                   :acp-notification `((method . "session/update")
+                                       (params (update . ,update))))))
+        (notify '((sessionUpdate . "tool_call") (toolCallId . "A")
+                  (title . "A") (kind . "other") (status . "pending")))
+        (notify '((sessionUpdate . "agent_message_chunk")
+                  (content (type . "text") (text . "msg"))))
+        (notify '((sessionUpdate . "tool_call_update") (toolCallId . "A")
+                  (status . "completed")
+                  (content . [((type . "content")
+                               (content (type . "text") (text . "done")))])))
+        (notify '((sessionUpdate . "tool_call") (toolCallId . "B")
+                  (title . "B") (kind . "other") (status . "pending"))))
+      ;; B must land in a fresh group, not A's.
+      (should (equal "tool-calls-1" (map-nested-elt state '(:tool-calls "A" :group-id))))
+      (should (equal "tool-calls-2" (map-nested-elt state '(:tool-calls "B" :group-id)))))))
+
+(ert-deftest agent-shell--tool-call-grouping-consecutive-share-group-test ()
+  "Consecutive tool calls (no interleaving entry) share one group.
+Guards that the #31 fix does not over-split: an in-place completion update
+between two tool calls keeps them together."
+  (let ((state (list (cons :tool-calls nil)
+                     (cons :last-entry-type nil)
+                     (cons :tool-call-group-count 0)
+                     (cons :chunked-group-count 0)
+                     (cons :active-requests t)
+                     (cons :last-activity-time nil)
+                     (cons :buffer nil))))
+    (cl-letf (((symbol-function 'agent-shell--update-fragment) #'ignore)
+              ((symbol-function 'agent-shell--refresh-tool-call-group-header) #'ignore)
+              ((symbol-function 'agent-shell--append-transcript) #'ignore)
+              ((symbol-function 'agent-shell--make-transcript-tool-call-entry)
+               (lambda (&rest _) ""))
+              ((symbol-function 'agent-shell--delete-fragment) #'ignore)
+              ((symbol-function 'agent-shell--cancel-idle-timer) #'ignore)
+              ((symbol-function 'agent-shell--emit-event) #'ignore)
+              ((symbol-function 'agent-shell-make-tool-call-label)
+               (lambda (&rest _) '((:status . "s") (:title . "t")))))
+      (cl-flet ((notify (update)
+                  (agent-shell--on-notification
+                   :state state
+                   :acp-notification `((method . "session/update")
+                                       (params (update . ,update))))))
+        (notify '((sessionUpdate . "tool_call") (toolCallId . "A")
+                  (title . "A") (kind . "other") (status . "pending")))
+        (notify '((sessionUpdate . "tool_call_update") (toolCallId . "A")
+                  (status . "completed")
+                  (content . [((type . "content")
+                               (content (type . "text") (text . "done")))])))
+        (notify '((sessionUpdate . "tool_call") (toolCallId . "B")
+                  (title . "B") (kind . "other") (status . "pending"))))
+      (should (equal "tool-calls-1" (map-nested-elt state '(:tool-calls "A" :group-id))))
+      (should (equal "tool-calls-1" (map-nested-elt state '(:tool-calls "B" :group-id)))))))
+
 (ert-deftest agent-shell--tool-call-group-header-label-test ()
   "Header glyph is `completed' only when all are (else the worst present),
 and the completed/total count lets a non-completed member lift the total only."

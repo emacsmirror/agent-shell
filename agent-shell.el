@@ -2447,7 +2447,13 @@ No-op with no members yet."
                   (diff-text (agent-shell--format-diffs-as-text diffs))
                   (body-text (if diff-text
                                  (concat output "\n\n" diff-text)
-                               output)))
+                               output))
+                  ;; Whether this update introduces a new tool call rather than
+                  ;; editing an earlier one in place.  Captured before the
+                  ;; group-id helper assigns a group, so an in-place update
+                  ;; does not look new.
+                  (tool-newly-grouped
+                   (not (map-nested-elt state `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :group-id)))))
              ;; Log tool call to transcript when completed or failed
              (when (and (map-nested-elt acp-notification '(params update status))
                         (member (map-nested-elt acp-notification '(params update status)) '("completed" "failed")))
@@ -2510,8 +2516,12 @@ No-op with no members yet."
                         (string-trim body-text)))
                 :expanded agent-shell-tool-use-expand-by-default
                 :above-last-prompt (not (agent-shell--active-requests-p state)))
-               (agent-shell--refresh-tool-call-group-header state group-id)))
-           (map-put! state :last-entry-type "tool_call_update"))
+               (agent-shell--refresh-tool-call-group-header state group-id))
+             ;; Only advance the run boundary when this update introduced a new
+             ;; tool call (appended at the end).  An in-place update of an
+             ;; earlier tool must not erase an intervening entry's boundary.
+             (when tool-newly-grouped
+               (map-put! state :last-entry-type "tool_call_update"))))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "available_commands_update")
            (map-put! state :available-commands (map-nested-elt acp-notification '(params update availableCommands)))
            (agent-shell--update-fragment
