@@ -2548,8 +2548,9 @@ No-op with no members yet."
               :block-id (format "%s-agent_thought_chunk"
                                 (map-elt state :chunked-group-count))
               :label-left  (concat
-                            agent-shell-thought-process-icon
-                            " "
+                            (when (and agent-shell-thought-process-icon
+                                       (not (string-empty-p agent-shell-thought-process-icon)))
+                              (concat agent-shell-thought-process-icon " "))
                             (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading))
               :body content
               :append (equal (map-elt state :last-entry-type)
